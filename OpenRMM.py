@@ -125,7 +125,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadProcessor = threading.Thread(target=self.startThread, args=["getProcessor", 120])
 
         print("Finished Configuring Threads")
-        print("Starting Commnad Loop") 
+        print("Starting Command Loop") 
         print("Wating for Commands") 
 
         try:
@@ -743,7 +743,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             screenshot = screenshot.resize((300,300))
 
             with io.BytesIO() as output:          
-                Screenshot.save(output, format='JPEG')
+                screenshot.save(output, format='JPEG')
                 hex_data = output.getvalue()
             self.mqtt.publish(str(self.ID) + "/Data/Screenshot", hex_data, qos=1)
         except:
@@ -751,7 +751,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Show Alert
     def showAlert(self, text):
-        selfpyautogui.alert(text)
+        self.pyautogui.alert(text)
 
     # Run Code in CMD
     def CMD(self, command):
