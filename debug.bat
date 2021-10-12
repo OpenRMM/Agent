@@ -26,3 +26,4 @@ if '%errorlevel%' NEQ '0' (
 
 cd C:\Users\Brad\Github Desktop\Agent
 py OpenRMM.py debug
+pause

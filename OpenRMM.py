@@ -55,9 +55,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             print("Setting up MQTT")
             import paho.mqtt.client as mqtt
             self.mqtt = mqtt.Client(client_id=self.hostname, clean_session=True)
-            self.mqtt.username_pw_set("*********", "****")
+            self.mqtt.username_pw_set("*********", "*******")
             self.mqtt.will_set(self.hostname + "/Status", "Offline", qos=1, retain=True)
-            self.mqtt.connect("*********", port=1883)
+            self.mqtt.connect("********", port=1883)
             self.mqtt.subscribe(self.hostname + "/Commands/#", qos=1)
             self.mqtt.on_message = self.on_message
             self.mqtt.on_connect = self.on_connect
@@ -739,14 +739,15 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         print("Getting Screenshot")
         try:
             screenshot = pyautogui.screenshot()
-            screenshot = screenshot.resize((300,300))
+            screenshot = screenshot.resize((800,800), PIL.Image.ANTIALIAS)
 
             with io.BytesIO() as output:          
                 screenshot.save(output, format='JPEG')
                 hex_data = output.getvalue()
             self.mqtt.publish(str(self.ID) + "/Data/Screenshot", hex_data, qos=1)
-        except:
+        except Exception as e:
             print("An exception occurred in getScreenshot")
+            print(e)
 
     # Show Alert
     def showAlert(self, text):
