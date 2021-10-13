@@ -23,6 +23,7 @@ import win32event
 import win32service
 import sys
 import pkg_resources
+import re
 
 required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
@@ -31,6 +32,7 @@ missing = required - installed
 if missing:
     python = sys.executable
     subprocess.check_call([python, '-m', 'pip', 'install', *missing], stdout=subprocess.DEVNULL)
+
 
 
 class OpenRMMAgent(win32serviceutil.ServiceFramework):
@@ -55,13 +57,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             print("Setting up MQTT")
             import paho.mqtt.client as mqtt
             self.mqtt = mqtt.Client(client_id=self.hostname, clean_session=True)
-            self.mqtt.username_pw_set("*********", "*******")
+            self.mqtt.username_pw_set("*****", "******")
             self.mqtt.will_set(self.hostname + "/Status", "Offline", qos=1, retain=True)
-            self.mqtt.connect("********", port=1883)
+            self.mqtt.connect("******", port=1883)
             self.mqtt.subscribe(self.hostname + "/Commands/#", qos=1)
             self.mqtt.on_message = self.on_message
             self.mqtt.on_connect = self.on_connect
-            self.mqtt.on_disconnect = self.on_disconnect  
+            self.mqtt.on_disconnect = self.on_disconnect
             self.mqtt.loop_start()
         except Exception:
             print(sys.exc_info()[1])
@@ -94,6 +96,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.SCSIController = {}
         self.Products = {}
         self.Processor = {}
+        self.Firewall = {}
 
         print("Finished Setup")
         print("Configuring Threads")
@@ -122,6 +125,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadSCSIController = threading.Thread(target=self.startThread, args=["getSCSIController", 120])
         self.threadProduct = threading.Thread(target=self.startThread, args=["getProducts", 60])
         self.threadProcessor = threading.Thread(target=self.startThread, args=["getProcessor", 120])
+        self.threadFirewall = threading.Thread(target=self.startThread, args=["getFirewall", 120])
 
         print("Finished Configuring Threads")
         print("Starting Command Loop") 
@@ -172,6 +176,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         if (self.command["topic"] == self.ID + "/Commands/getProducts"): self.getProducts(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/getUsers"): self.getUserAccounts(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/getProcessor"): self.getProcessor(self.wmimain)          
+                        if (self.command["topic"] == self.ID + "/Commands/getFirewall"): self.getFirewall(self.wmimain) 
 
                         if (self.command["topic"] == self.ID + "/Commands/getScreenshot"): self.getScreenshot(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/showAlert"): self.showAlert(self.command["payload"])
@@ -734,6 +739,21 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except:
             print("An exception occurred in getProcessor")
 
+    # Get Firewall
+    def getFirewall(self, wmi):
+        print("Getting Firewall")
+        try:
+            subFirewall = {}
+            subFirewall['currentProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show currentprofile state', shell=True).decode("utf-8") else 'OFF'
+            subFirewall['publicProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show publicProfile state', shell=True).decode("utf-8") else 'OFF'
+            subFirewall['privateProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show privateProfile state', shell=True).decode("utf-8") else 'OFF'
+            subFirewall['domainProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show domainProfile state', shell=True).decode("utf-8") else 'OFF'
+            self.Firewall[0] = subFirewall
+            self.mqtt.publish(str(self.ID) + "/Data/Firewall", json.dumps(self.Firewall), qos=1)
+        except:
+            print("An exception occurred in getFirewall")
+
+
     # Get Screenshot
     def getScreenshot(self, wmi):
         print("Getting Screenshot")
@@ -791,6 +811,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadSCSIController.start()
         self.threadProduct.start()
         self.threadProcessor.start()
+        self.threadFirewall.start()
 
         print("Finished Starting Threads")
 
