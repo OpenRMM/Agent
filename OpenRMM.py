@@ -10,7 +10,7 @@ from os.path import exists
 import wmi
 import paho.mqtt.client as mqtt
 import json
-import time
+import time, datetime
 import subprocess
 import threading
 import pythoncom
@@ -116,6 +116,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         print("Configuring Threads")
 
         # Creating Threads
+        self.threadHeartbeat = threading.Thread(target=self.startThread, args=["Heartbeat", 1]) 
         self.threadGeneral = threading.Thread(target=self.startThread, args=["getGeneral", 30])
         self.threadBIOS = threading.Thread(target=self.startThread, args=["getBIOS", 60])
         self.threadStartup = threading.Thread(target=self.startThread, args=["getStartup", 30])
@@ -241,6 +242,19 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if (loopCount == (60 * minutes)): # Every x minutes
                 loopCount = 0
                 result = eval("self." + name + "(wmi, False)")
+
+                
+    # Heartbeat
+    def Heartbeat(self, wmi, force=False):
+        print("Sending Heartbeat")
+        Heartbeat = {}
+        try:
+            x = datetime.datetime.now()
+            time = x.strftime("%Y-%m-%d %H:%M:%S")
+            Heartbeat['time'] = time
+            self.mqtt.publish(str(self.ID) + "/Data/Heartbeat", json.dumps(Heartbeat), qos=1)
+        except Exception as e:
+            self.log("Heartbeat", e)
 
     # Get General
     def getGeneral(self, wmi, force=False):
@@ -1000,6 +1014,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.mqtt.publish(self.hostname + "/Status", "Online", qos=1, retain=True)
 
         print("Starting Threads")
+        self.threadHeartbeat.start()
         self.threadGeneral.start()
         self.threadBIOS.start()
         self.threadStartup.start()
