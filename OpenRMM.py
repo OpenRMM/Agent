@@ -23,9 +23,9 @@ import pkg_resources
 import urllib.request
  
 ################################# SETUP ##################################
-MQTT_Server = "****"
-MQTT_Username = "****"
-MQTT_Password = "****"
+MQTT_Server = "***"
+MQTT_Username = "***"
+MQTT_Password = "***"
 MQTT_Port = 1883
 
 Service_Name = "OpenRMMAgent"
@@ -346,7 +346,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subStartup["Location"] = s.Location
                 subStartup["Command"] = s.Command
                 subStartup["Caption"] = s.Caption     
-                self.Startup[count] = subStartup
+                StartupNew[count] = subStartup
             # Only publish if changed
             if (StartupNew != self.Startup or force == True):
                 self.Startup = StartupNew
@@ -394,7 +394,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProcesses["Status"] = s.Status
                 subProcesses["Name"] = s.Name
                 subProcesses["Caption"] = s.Caption
-                self.Processes[count] = subProcesses
+                ProcessesNew[count] = subProcesses
             # Only publish if changed
             if (ProcessesNew != self.Processes or force == True):
                 self.Processes = ProcessesNew
@@ -423,7 +423,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subUserAccounts["PasswordRequired"] = s.PasswordRequired
                 subUserAccounts["Caption"] = s.Caption
                 subUserAccounts["Name"] = s.Name 
-                self.UserAccounts[count] = subUserAccounts
+                UserAccountsNew[count] = subUserAccounts
             # Only publish if changed
             if (UserAccountsNew != self.UserAccounts or force == True):
                 self.UserAccounts = UserAccountsNew
@@ -452,7 +452,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subVideoConfiguration["ScreenWidth"] = s.ScreenWidth
                 subVideoConfiguration["VerticalResolution"] = s.VerticalResolution
                 subVideoConfiguration["Caption"] = s.Caption
-                self.VideoConfiguration[count] = subVideoConfiguration
+                VideoConfigurationNew[count] = subVideoConfiguration
             # Only publish if changed
             if (VideoConfigurationNew != self.VideoConfiguration or force == True):
                 self.VideoConfiguration = VideoConfigurationNew
@@ -483,7 +483,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subLogicalDisk["Size"] = s.Size
                 subLogicalDisk["VolumeSerialNumber"] = s.VolumeSerialNumber
                 subLogicalDisk["Caption"] = s.Caption 
-                self.LogicalDisk[count] = subLogicalDisk
+                LogicalDiskNew[count] = subLogicalDisk
             # Only publish if changed
             if (LogicalDiskNew != self.LogicalDisk or force == True):
                 self.LogicalDisk = LogicalDiskNew
@@ -514,7 +514,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subMappedLogicalDisk["VolumeName"] = s.VolumeName
                 subMappedLogicalDisk["VolumeSerialNumber"] = s.VolumeSerialNumber
                 subMappedLogicalDisk["Caption"] = s.Caption
-                self.MappedLogicalDisk[count] = subMappedLogicalDisk
+                MappedLogicalDiskNew[count] = subMappedLogicalDisk
             # Only publish if changed
             if (MappedLogicalDiskNew != self.MappedLogicalDisk or force == True):
                 self.MappedLogicalDisk = MappedLogicalDiskNew
@@ -546,7 +546,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPhysicalMemory["PositionInRow"] = s.PositionInRow
                 subPhysicalMemory["Speed"] = s.Speed
                 subPhysicalMemory["Status"] = s.Status
-                self.PhysicalMemory[count] = subPhysicalMemory
+                PhysicalMemoryNew[count] = subPhysicalMemory
             # Only publish if changed
             if (PhysicalMemoryNew != self.PhysicalMemory or force == True):
                 self.PhysicalMemory = PhysicalMemoryNew
@@ -570,7 +570,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPointingDevice["Manufacturer"] = s.Manufacturer
                 subPointingDevice["Name"] = s.Name
                 subPointingDevice["Status"] = s.Status
-                self.PointingDevice[count] = subPointingDevice
+                PointingDeviceNew[count] = subPointingDevice
             # Only publish if changed
             if (PointingDeviceNew != self.PointingDevice or force == True):
                 self.PointingDevice = PointingDeviceNew
@@ -593,7 +593,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subKeyboard["DeviceID"] = s.DeviceID
                 subKeyboard["Name"] = s.Name
                 subKeyboard["Status"] = s.Status
-                self.Keyboard[count] = subKeyboard
+                KeyboardNew[count] = subKeyboard
             # Only publish if changed
             if (KeyboardNew != self.Keyboard or force == True):
                 self.Keyboard = KeyboardNew
@@ -621,7 +621,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBaseBoard["Status"] = s.Status
                 subBaseBoard["Tag"] = s.Tag
                 subBaseBoard["Version"] = s.Version
-                self.BaseBoard[count] = subBaseBoard
+                BaseBoardNew[count] = subBaseBoard
             # Only publish if changed
             if (BaseBoardNew != self.BaseBoard or force == True):
                 self.BaseBoard = BaseBoardNew
@@ -648,7 +648,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subDesktopMonitor["Status"] = s.Status
                 subDesktopMonitor["ScreenHeight"] = s.ScreenHeight
                 subDesktopMonitor["ScreenWidth"] = s.ScreenWidth
-                self.DesktopMonitor[count] = subDesktopMonitor
+                DesktopMonitorNew[count] = subDesktopMonitor
             # Only publish if changed
             if (DesktopMonitorNew != self.DesktopMonitor or force == True):
                 self.DesktopMonitor = DesktopMonitorNew
@@ -676,7 +676,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPrinter["Network"] = s.Network
                 subPrinter["PortName"] = s.PortName
                 subPrinter["Shared"] = s.Shared
-                self.Printer[count] = subPrinter
+                PrinterNew[count] = subPrinter
             # Only publish if changed
             if (PrinterNew != self.Printer or force == True):
                 self.Printer = PrinterNew
@@ -700,7 +700,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkLoginProfile["HomeDirectory"] = s.HomeDirectory
                 subNetworkLoginProfile["Name"] = s.Name
                 subNetworkLoginProfile["NumberOfLogons"] = s.NumberOfLogons
-                self.NetworkLoginProfile[count] = subNetworkLoginProfile
+                NetworkLoginProfileNew[count] = subNetworkLoginProfile
             # Only publish if changed
             if (NetworkLoginProfileNew != self.NetworkLoginProfile or force == True):
                 self.NetworkLoginProfile = NetworkLoginProfileNew
@@ -734,7 +734,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     #subNetworkAdapterIP[ipCount] = ip_address
 
                 subNetworkAdapter["IPAddress"] = subNetworkAdapterIP
-                self.NetworkAdapters[count] = subNetworkAdapter
+                NetworkAdaptersNew[count] = subNetworkAdapter
             # Only publish if changed
             if (NetworkAdaptersNew != self.NetworkAdapters or force == True):
                 self.NetworkAdapters = NetworkAdaptersNew
@@ -762,7 +762,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPnPEntity["Present"] = s.Present
                 subPnPEntity["Service"] = s.Service
                 subPnPEntity["Status"] = s.Status
-                self.PnPEntitys[count] = subPnPEntity
+                PnPEntitysNew[count] = subPnPEntity
             # Only publish if changed
             if (PnPEntitysNew != self.PnPEntitys or force == True):
                 self.PnPEntitys = PnPEntitysNew
@@ -787,7 +787,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subSoundDevice["Name"] = s.Name
                 subSoundDevice["ProductName"] = s.ProductName
                 subSoundDevice["Status"] = s.Status
-                self.SoundDevices[count] = subSoundDevice
+                SoundDevicesNew[count] = subSoundDevice
             # Only publish if changed
             if (SoundDevicesNew != self.SoundDevices or force == True):
                 self.SoundDevices = SoundDevicesNew
@@ -811,7 +811,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subSCSIController["Manufacturer"] = s.Manufacturer
                 subSCSIController["Name"] = s.Name
                 subSCSIController["DriverName"] = s.DriverName
-                self.SCSIController[count] = subSCSIController
+                SCSIControllerNew[count] = subSCSIController
             # Only publish if changed
             if (SCSIControllerNew != self.SCSIController or force == True):
                 self.SCSIController = SCSIControllerNew
@@ -837,7 +837,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProduct["Name"] = s.Name
                 subProduct["Vendor"] = s.Vendor
                 subProduct["Version"] = s.Version      
-                self.Products[count] = subProduct
+                ProductsNew[count] = subProduct
             # Only publish if changed
             if (ProductsNew != self.Products or force == True):
                 self.Products = ProductsNew
@@ -869,7 +869,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProcessor["SerialNumber"] = s.SerialNumber
                 subProcessor["ThreadCount"] = s.ThreadCount
                 subProcessor["Version"] = s.Version
-                self.Processor[count] = subProcessor
+                ProcessorNew[count] = subProcessor
             # Only publish if changed
             if (ProcessorNew != self.Processor or force == True):
                 self.Processor = ProcessorNew
@@ -888,7 +888,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             subFirewall['publicProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show publicProfile state', shell=True).decode("utf-8") else 'OFF'
             subFirewall['privateProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show privateProfile state', shell=True).decode("utf-8") else 'OFF'
             subFirewall['domainProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show domainProfile state', shell=True).decode("utf-8") else 'OFF'
-            self.Firewall[0] = subFirewall
+            FirewallNew[0] = subFirewall
             # Only publish if changed
             if (FirewallNew != self.Firewall or force == True):
                 self.Firewall = FirewallNew
@@ -905,7 +905,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             subAgent = {}
             subAgent["Name"] = Service_Name
             subAgent["Version"] = Agent_Version
-            self.Agent[0] = subAgent
+            AgentNew[0] = subAgent
             # Only publish if changed
             if (AgentNew != self.Agent or force == True):
                 self.Agent = AgentNew
@@ -939,7 +939,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBattery["TimeOnBattery"] = str(s.TimeOnBattery)
                 subBattery["TimeToFullCharge"] = str(s.TimeToFullCharge)
                 subBattery["BatteryStatus"] = s.BatteryStatus
-                self.Battery[count] = subBattery
+                BatteryNew[count] = subBattery
             # Only publish if changed
             if (BatteryNew != self.Battery or force == True):
                 self.Battery = BatteryNew
@@ -960,7 +960,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     subFilesystem.append(os.path.join(root, d))
                 for f in files:
                     subFilesystem.append(os.path.join(root, f))
-            self.Filesystem["C"] = subFilesystem
+            FilesystemNew["C"] = subFilesystem
             # Only publish if changed
             if (FilesystemNew != self.Filesystem or force == True):
                 self.Filesystem = FilesystemNew
