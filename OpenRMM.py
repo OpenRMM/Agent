@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 # TODo:
-# Group, Firewall, WindowsActivation
+# Group, WindowsActivation
 #
-# Agent Settings, Agent Info
+# Agent Settings
 
 import os
 from os.path import exists
@@ -23,9 +23,9 @@ import pkg_resources
 import urllib.request
 
 ################################# SETUP ##################################
-MQTT_Server = "****************"
-MQTT_Username = "****************"
-MQTT_Password = "****************"
+MQTT_Server = "******"
+MQTT_Username = "******"
+MQTT_Password = "******"
 MQTT_Port = 1883
 
 Service_Name = "OpenRMMAgent"
@@ -108,7 +108,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.Firewall = {}
         self.Agent = {}
         self.Battery = {}
-        self.FileSystem = {}
+        self.Filesystem = {}
 
         print("Finished Setup")
         print("Configuring Threads")
@@ -194,7 +194,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         if (self.command["topic"] == self.ID + "/Commands/getFirewall"): self.getFirewall(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/getAgent"): self.getFirewall(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/getFilesystem"): self.getFilesystem(self.wmimain)
-
+                        
                         if (self.command["topic"] == self.ID + "/Commands/getScreenshot"): self.getScreenshot(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/showAlert"): self.showAlert(self.command["payload"])
 
@@ -245,6 +245,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def getGeneral(self, wmi):
         print("Getting General")
         try:
+            GeneralNew = {}
             subGeneral = {}
             externalIP = urllib.request.urlopen('https://ident.me').read().decode('utf8')
             subGeneral["ExternalIP"] = externalIP
@@ -274,10 +275,15 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subGeneral["NumberOfProcessors"] = s.HypervisorPresent
                 subGeneral["Workgroup"] = s.Workgroup
                 subGeneral["UserName"] = s.UserName
-            self.General[0] = subGeneral
-            self.mqtt.publish(str(self.ID) + "/Data/General", json.dumps(self.General), qos=1)
-        except:
-            print("An exception occurred in getGeneral")
+            GeneralNew[0] = subGeneral
+
+            # Only publish if changed
+            if GeneralNew != self.General:
+                self.General = GeneralNew
+                self.mqtt.publish(str(self.ID) + "/Data/General", json.dumps(self.General), qos=1)
+                print("General Changed, Sending Data")
+        except Exception as e:
+            self.log("General", e)
 
     # Get Services
     def getServices(self, wmi):
@@ -295,26 +301,26 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subService["Caption"] = s.Caption
                 self.Services[count] = subService
             self.mqtt.publish(str(self.ID) + "/Data/Services", json.dumps(self.Services), qos=1)
-        except:
-            print("An exception occurred in getServices") 
+        except Exception as e:
+            self.log("Services", e) 
 
     # Get BIOS
     def getBIOS(self, wmi):  
         print("Getting BIOS")
-        #try:
-        for s in wmi.Win32_BIOS(["Caption", "Description", "Manufacturer", "Name", "SerialNumber", "Version", "Status"]):
-            subBIOS = {}
-            subBIOS["Caption"] = s.Caption
-            subBIOS["Description"] = s.Description
-            subBIOS["Manufacturer"] = s.Manufacturer
-            subBIOS["Name"] = s.Name
-            subBIOS["SerialNumber"] = s.SerialNumber
-            subBIOS["Version"] = s.Version
-            subBIOS["Status"] = s.Status
-            self.BIOS[0] = subBIOS
-        self.mqtt.publish(str(self.ID) + "/Data/BIOS", json.dumps(self.BIOS), qos=1)
-        #except:
-            #print("An exception occurred in getBIOS")         
+        try:
+            for s in wmi.Win32_BIOS(["Caption", "Description", "Manufacturer", "Name", "SerialNumber", "Version", "Status"]):
+                subBIOS = {}
+                subBIOS["Caption"] = s.Caption
+                subBIOS["Description"] = s.Description
+                subBIOS["Manufacturer"] = s.Manufacturer
+                subBIOS["Name"] = s.Name
+                subBIOS["SerialNumber"] = s.SerialNumber
+                subBIOS["Version"] = s.Version
+                subBIOS["Status"] = s.Status
+                self.BIOS[0] = subBIOS
+            self.mqtt.publish(str(self.ID) + "/Data/BIOS", json.dumps(self.BIOS), qos=1)
+        except Exception as e:
+            self.log("BIOS", e)         
 
     # Get Startup Items
     def getStartup(self, wmi):
@@ -329,8 +335,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subStartup["Caption"] = s.Caption     
                 self.Startup[count] = subStartup
             self.mqtt.publish(str(self.ID) + "/Data/StartupItems", json.dumps(self.Startup), qos=1)
-        except:
-            print("An exception occurred in getStartup")      
+        except Exception as e:
+            self.log("Startup", e)      
 
     # Get Optional Features
     def getOptionalFeatures(self, wmi):
@@ -348,8 +354,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subOptionalFeatures["InstallState"] = s.InstallState
                 self.OptionalFeatures[count] = subOptionalFeatures
             self.mqtt.publish(str(self.ID) + "/Data/OptionalFeatures", json.dumps(self.OptionalFeatures), qos=1)
-        except:
-            print("An exception occurred in getOptionalFeatures")
+        except Exception as e:
+            self.log("OptionalFeatures", e)
 
     # Get Processes
     def getProcesses(self, wmi):
@@ -367,8 +373,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProcesses["Caption"] = s.Caption
                 self.Processes[count] = subProcesses
             self.mqtt.publish(str(self.ID) + "/Data/Processes", json.dumps(self.Processes), qos=1)
-        except:
-            print("An exception occurred in getProcesses")
+        except Exception as e:
+            self.log("Processes", e)
 
     # Get User Accounts
     def getUserAccounts(self, wmi):
@@ -391,8 +397,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subUserAccounts["Name"] = s.Name 
                 self.UserAccounts[count] = subUserAccounts
             self.mqtt.publish(str(self.ID) + "/Data/UserAccounts", json.dumps(self.UserAccounts), qos=1)
-        except:
-            print("An exception occurred in getUserAccounts")
+        except Exception as e:
+            self.log("UserAccounts", e)
 
     # Get Video Configuration
     def getVideoConfiguration(self, wmi):
@@ -415,8 +421,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subVideoConfiguration["Caption"] = s.Caption
                 self.VideoConfiguration[count] = subVideoConfiguration
             self.mqtt.publish(str(self.ID) + "/Data/VideoConfiguration", json.dumps(self.VideoConfiguration), qos=1)
-        except:
-            print("An exception occurred in getVideoConfiguration")
+        except Exception as e:
+            self.log("VideoConfiguration", e)
 
     # Get Logical Disk
     def getLogicalDisk(self, wmi):
@@ -441,8 +447,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subLogicalDisk["Caption"] = s.Caption 
                 self.LogicalDisk[count] = subLogicalDisk
             self.mqtt.publish(str(self.ID) + "/Data/LogicalDisk", json.dumps(self.LogicalDisk), qos=1)
-        except:
-            print("An exception occurred in getLogicalDisk")
+        except Exception as e:
+            self.log("LogicalDisk", e)
 
     # Get Mapped Logical Disk
     def getMappedLogicalDisk(self, wmi):
@@ -467,8 +473,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subMappedLogicalDisk["Caption"] = s.Caption
                 self.MappedLogicalDisk[count] = subMappedLogicalDisk
             self.mqtt.publish(str(self.ID) + "/Data/MappedLogicalDisk", json.dumps(self.MappedLogicalDisk), qos=1)
-        except:
-            print("An exception occurred in getMappedLogicalDisk")
+        except Exception as e:
+            self.log("MappedLogicalDisk", e)
 
     # Get Physical Memory
     def getPhysicalMemory(self, wmi):
@@ -494,8 +500,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPhysicalMemory["Status"] = s.Status
                 self.PhysicalMemory[count] = subPhysicalMemory
             self.mqtt.publish(str(self.ID) + "/Data/PhysicalMemory", json.dumps(self.PhysicalMemory), qos=1)
-        except:
-            print("An exception occurred in getPhysicalMemory")
+        except Exception as e:
+            self.log("PhysicalMemory", e)
 
     # Get Pointing Device
     def getPointingDevice(self, wmi):
@@ -513,8 +519,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPointingDevice["Status"] = s.Status
                 self.PointingDevice[count] = subPointingDevice
             self.mqtt.publish(str(self.ID) + "/Data/PointingDevice", json.dumps(self.PointingDevice), qos=1)
-        except:
-            print("An exception occurred in getPointingDevice")
+        except Exception as e:
+            self.log("PointingDevice", e)
 
     # Get Keyboard
     def getKeyboard(self, wmi):
@@ -531,8 +537,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subKeyboard["Status"] = s.Status
                 self.Keyboard[count] = subKeyboard
             self.mqtt.publish(str(self.ID) + "/Data/Keyboard", json.dumps(self.Keyboard), qos=1)
-        except:
-            print("An exception occurred in getKeyboard")
+        except Exception as e:
+            self.log("Keyboard", e)
 
     # Get BaseBoard
     def getBaseBoard(self, wmi):
@@ -554,8 +560,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBaseBoard["Version"] = s.Version
                 self.BaseBoard[count] = subBaseBoard
             self.mqtt.publish(str(self.ID) + "/Data/BaseBoard", json.dumps(self.BaseBoard), qos=1)
-        except:
-            print("An exception occurred in getBaseBoard")
+        except Exception as e:
+            self.log("BaseBoard", e)
 
     # Get Desktop Monitor
     def getDesktopMonitor(self, wmi):
@@ -576,8 +582,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subDesktopMonitor["ScreenWidth"] = s.ScreenWidth
                 self.DesktopMonitor[count] = subDesktopMonitor
             self.mqtt.publish(str(self.ID) + "/Data/DesktopMonitor", json.dumps(self.DesktopMonitor), qos=1)
-        except:
-            print("An exception occurred in getDesktopMonitor")
+        except Exception as e:
+            self.log("DesktopMonitor", e)
 
     # Get Printers
     def getPrinters(self, wmi):
@@ -599,8 +605,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPrinter["Shared"] = s.Shared
                 self.Printer[count] = subPrinter
             self.mqtt.publish(str(self.ID) + "/Data/Printers", json.dumps(self.Printer), qos=1)
-        except:
-            print("An exception occurred in getPrinters")
+        except Exception as e:
+            self.log("Printers", e)
     
     # Get NetworkLoginProfile
     def getNetworkLoginProfile(self, wmi):
@@ -618,8 +624,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkLoginProfile["NumberOfLogons"] = s.NumberOfLogons
                 self.NetworkLoginProfile[count] = subNetworkLoginProfile
             self.mqtt.publish(str(self.ID) + "/Data/NetworkLoginProfile", json.dumps(self.NetworkLoginProfile), qos=1)
-        except:
-            print("An exception occurred in getNetworkLoginProfile")
+        except Exception as e:
+            self.log("NetworkLoginProfile", e)
 
     # Get Network Adapters
     def getNetworkAdapters(self, wmi):
@@ -647,8 +653,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkAdapter["IPAddress"] = subNetworkAdapterIP
                 self.NetworkAdapters[count] = subNetworkAdapter
             self.mqtt.publish(str(self.ID) + "/Data/NetworkAdapters", json.dumps(self.NetworkAdapters), qos=1)
-        except:
-            print("An exception occurred in getNetworkAdapters")
+        except Exception as e:
+            self.log("NetworkAdapters", e)
 
     # Get PnP Entitys
     def getPnPEntitys(self, wmi):
@@ -670,8 +676,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPnPEntity["Status"] = s.Status
                 self.PnPEntitys[count] = subPnPEntity
             self.mqtt.publish(str(self.ID) + "/Data/PnPEntitys", json.dumps(self.PnPEntitys), qos=1)
-        except:
-            print("An exception occurred in getPnPEntitys")
+        except Exception as e:
+            self.log("PnPEntitys", e)
 
     # Get Sound Entitys
     def getSoundDevices(self, wmi):
@@ -690,8 +696,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subSoundDevice["Status"] = s.Status
                 self.SoundDevices[count] = subSoundDevice
             self.mqtt.publish(str(self.ID) + "/Data/SoundDevices", json.dumps(self.SoundDevices), qos=1)
-        except:
-            print("An exception occurred in getSoundDevices")
+        except Exception as e:
+            self.log("SoundDevices", e)
 
     # Get SCSI Controller
     def getSCSIController(self, wmi):
@@ -709,8 +715,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subSCSIController["DriverName"] = s.DriverName
                 self.SCSIController[count] = subSCSIController
             self.mqtt.publish(str(self.ID) + "/Data/SCSIController", json.dumps(self.SCSIController), qos=1)
-        except:
-            print("An exception occurred in getSCSIController")
+        except Exception as e:
+            self.log("SCSIController", e)
 
     # Get Products
     def getProducts(self, wmi):
@@ -730,8 +736,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProduct["Version"] = s.Version      
                 self.Products[count] = subProduct
             self.mqtt.publish(str(self.ID) + "/Data/Products", json.dumps(self.Products), qos=1)
-        except:
-            print("An exception occurred in getProducts")
+        except Exception as e:
+            self.log("Products", e)
 
     # Get Processor
     def getProcessor(self, wmi):
@@ -757,8 +763,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProcessor["Version"] = s.Version
                 self.Processor[count] = subProcessor
             self.mqtt.publish(str(self.ID) + "/Data/Processor", json.dumps(self.Processor), qos=1)
-        except:
-            print("An exception occurred in getProcessor")
+        except Exception as e:
+            self.log("Processor", e)
 
     # Get Firewall
     def getFirewall(self, wmi):
@@ -771,8 +777,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             subFirewall['domainProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show domainProfile state', shell=True).decode("utf-8") else 'OFF'
             self.Firewall[0] = subFirewall
             self.mqtt.publish(str(self.ID) + "/Data/Firewall", json.dumps(self.Firewall), qos=1)
-        except:
-            print("An exception occurred in getFirewall")
+        except Exception as e:
+            self.log("Firewall", e)
 
     # Get Agent
     def getAgent(self, wmi):
@@ -783,8 +789,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             subAgent["Version"] = Agent_Version
             self.Agent[0] = subAgent
             self.mqtt.publish(str(self.ID) + "/Data/Agent", json.dumps(self.Agent), qos=1)
-        except:
-            print("An exception occurred in getAgent")
+        except Exception as e:
+            self.log("Agent", e)
 
     # Get Battery
     def getBattery(self, wmi):
@@ -812,8 +818,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBattery["BatteryStatus"] = s.BatteryStatus
                 self.Battery[count] = subBattery
             self.mqtt.publish(str(self.ID) + "/Data/Battery", json.dumps(self.Battery), qos=1)
-        except:
-            print("An exception occurred in getBattery")
+        except Exception as e:
+            self.log("Battery", e)
 
     # Get Filesystem
     def getFilesystem(self, wmi):
@@ -826,11 +832,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     subFilesystem.append(os.path.join(root, d))
                 for f in files:
                     subFilesystem.append(os.path.join(root, f))
-      
-                self.Filesystem["C"] = subFilesystem
+            self.Filesystem["C"] = subFilesystem
             self.mqtt.publish(str(self.ID) + "/Data/Filesystem", json.dumps(self.Filesystem), qos=1)
-        except:
-            print("An exception occurred in getFilesystem")
+        except Exception as e:
+            self.log("Filesystem", e)
 
     def getScreenshot(self, wmi):
         print("Getting Screenshot")
@@ -843,8 +848,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 hex_data = output.getvalue()
             self.mqtt.publish(str(self.ID) + "/Data/Screenshot", hex_data, qos=1)
         except Exception as e:
-            print("An exception occurred in getScreenshot")
-            print(e)
+            self.log("Screenshot", e)
 
     # Show Alert
     def showAlert(self, text):
@@ -856,7 +860,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             returnData = subprocess.check_output(command.decode("utf-8"), shell=True)
             self.mqtt.publish(str(self.ID) + "/Data/CMD", returnData, qos=1)
         except:
-            print("An exception occurred in CMD")
+            self.log("CMD", "An exception occurred in CMD")
 
     def start(self):
         self.mqtt.subscribe(self.ID + "/Commands/#", qos=1)
@@ -894,6 +898,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
         print("Finished Starting Threads")
 
+    def log(self, name, message):
+        print("Error in: "+name)
+        print(message)
 
 if __name__ == "__main__":
     win32serviceutil.HandleCommandLine(OpenRMMAgent)
