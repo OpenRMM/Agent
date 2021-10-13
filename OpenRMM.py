@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 # TODo:
-# Group, Firewall, WindowsActivation
+# Group, WindowsActivation
 #
-# Agent Settings, Agent Info
+# Agent Settings
 
 import os
 from os.path import exists
@@ -15,15 +15,26 @@ import subprocess
 import threading
 import pythoncom
 import pyautogui
-import io
+import io, sys
 import PIL
-import win32serviceutil
+import win32serviceutil, win32event, win32service
 import servicemanager
-import win32event
-import win32service
-import sys
 import pkg_resources
-import re
+import urllib.request
+
+################################# SETUP ##################################
+MQTT_Server = "*****"
+MQTT_Username = "********"
+MQTT_Password = "*******!"
+MQTT_Port = 1883
+
+Service_Name = "OpenRMMAgent"
+Service_Display_Name = "The OpenRMM Agent"
+Service_Description = "A free open-source remote monitoring & management tool."
+
+Agent_Version = "1.0"
+
+###########################################################################
 
 required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
@@ -33,12 +44,10 @@ if missing:
     python = sys.executable
     subprocess.check_call([python, '-m', 'pip', 'install', *missing], stdout=subprocess.DEVNULL)
 
-
-
 class OpenRMMAgent(win32serviceutil.ServiceFramework):
-    _svc_name_ = "OpenRMMAgent"
-    _svc_display_name_ = "The OpenRMM Agent"
-    _svc_description_ = "A free open-source remote monitoring & management tool."
+    _svc_name_ = Service_Name
+    _svc_display_name_ = Service_Display_Name
+    _svc_description_ = Service_Description
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
@@ -57,9 +66,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             print("Setting up MQTT")
             import paho.mqtt.client as mqtt
             self.mqtt = mqtt.Client(client_id=self.hostname, clean_session=True)
-            self.mqtt.username_pw_set("*****", "******")
+            self.mqtt.username_pw_set(MQTT_Username, MQTT_Password)
             self.mqtt.will_set(self.hostname + "/Status", "Offline", qos=1, retain=True)
-            self.mqtt.connect("******", port=1883)
+            self.mqtt.connect(MQTT_Server, port=MQTT_Port)
             self.mqtt.subscribe(self.hostname + "/Commands/#", qos=1)
             self.mqtt.on_message = self.on_message
             self.mqtt.on_connect = self.on_connect
@@ -97,6 +106,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.Products = {}
         self.Processor = {}
         self.Firewall = {}
+        self.Agent = {}
+        self.Battery = {}
 
         print("Finished Setup")
         print("Configuring Threads")
@@ -126,7 +137,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadProduct = threading.Thread(target=self.startThread, args=["getProducts", 60])
         self.threadProcessor = threading.Thread(target=self.startThread, args=["getProcessor", 120])
         self.threadFirewall = threading.Thread(target=self.startThread, args=["getFirewall", 120])
-
+        self.threadAgent = threading.Thread(target=self.startThread, args=["getAgent", 180])
+        self.threadBattery = threading.Thread(target=self.startThread, args=["getBattery", 30])
+        
         print("Finished Configuring Threads")
         print("Starting Command Loop") 
         print("Wating for Commands") 
@@ -176,7 +189,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         if (self.command["topic"] == self.ID + "/Commands/getProducts"): self.getProducts(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/getUsers"): self.getUserAccounts(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/getProcessor"): self.getProcessor(self.wmimain)          
-                        if (self.command["topic"] == self.ID + "/Commands/getFirewall"): self.getFirewall(self.wmimain) 
+                        if (self.command["topic"] == self.ID + "/Commands/getFirewall"): self.getFirewall(self.wmimain)
+                        if (self.command["topic"] == self.ID + "/Commands/getAgent"): self.getFirewall(self.wmimain) 
 
                         if (self.command["topic"] == self.ID + "/Commands/getScreenshot"): self.getScreenshot(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/showAlert"): self.showAlert(self.command["payload"])
@@ -224,6 +238,44 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 loopCount = 0
                 result = eval("self." + name + "(wmi)")
 
+    # Get General
+    def getGeneral(self, wmi):
+        print("Getting General")
+        try:
+            subGeneral = {}
+            externalIP = urllib.request.urlopen('https://ident.me').read().decode('utf8')
+            subGeneral["ExternalIP"] = externalIP
+
+            for s in wmi.Win32_OperatingSystem(["BuildNumber", "Version", "csname", "FreePhysicalMemory", "LastBootUpTime", "Caption", "OSArchitecture", "SerialNumber", "NumberOfUsers", "NumberOfProcesses", "InstallDate", "Description"]):     
+                subGeneral["Version"] = s.Version
+                subGeneral["csname"] = s.csname
+                subGeneral["FreePhysicalMemory"] = s.FreePhysicalMemory
+                subGeneral["LastBootUpTime"] = s.LastBootUpTime
+                subGeneral["Caption"] = s.Caption
+                subGeneral["OSArchitecture"] = s.OSArchitecture
+                subGeneral["SerialNumber"] = s.SerialNumber
+                subGeneral["NumberOfUsers"] = s.NumberOfUsers
+                subGeneral["NumberOfProcesses"] = s.NumberOfProcesses
+                subGeneral["InstallDate"] = s.InstallDate
+                subGeneral["Description"] = s.Description
+                subGeneral["BuildNumber"] = s.BuildNumber
+                
+            for s in wmi.Win32_ComputerSystem(["manufacturer", "model", "systemtype", "totalphysicalmemory", "Domain", "HypervisorPresent", "NumberOfLogicalProcessors", "NumberOfProcessors", "Workgroup", "UserName"]):
+                subGeneral["Manufacturer"] = s.manufacturer
+                subGeneral["Model"] = s.model
+                subGeneral["SystemType"] = s.systemtype
+                subGeneral["Totalphysicalmemory"] = s.totalphysicalmemory
+                subGeneral["Domain"] = s.Domain
+                subGeneral["HypervisorPresent"] = s.HypervisorPresent
+                subGeneral["NumberOfLogicalProcessors"] = s.HypervisorPresent
+                subGeneral["NumberOfProcessors"] = s.HypervisorPresent
+                subGeneral["Workgroup"] = s.Workgroup
+                subGeneral["UserName"] = s.UserName
+            self.General[0] = subGeneral
+            self.mqtt.publish(str(self.ID) + "/Data/General", json.dumps(self.General), qos=1)
+        except:
+            print("An exception occurred in getGeneral")
+
     # Get Services
     def getServices(self, wmi):
         print("Getting Services")
@@ -259,42 +311,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.BIOS[0] = subBIOS
         self.mqtt.publish(str(self.ID) + "/Data/BIOS", json.dumps(self.BIOS), qos=1)
         #except:
-            #print("An exception occurred in getBIOS")    
-
-    # Get General
-    def getGeneral(self, wmi):
-        print("Getting General")
-        try:
-            for s in wmi.Win32_OperatingSystem(["BuildNumber", "Version", "csname", "FreePhysicalMemory", "LastBootUpTime", "Caption", "OSArchitecture", "SerialNumber", "NumberOfUsers", "NumberOfProcesses", "InstallDate", "Description"]):
-                subGeneral = {}
-                subGeneral["Version"] = s.Version
-                subGeneral["csname"] = s.csname
-                subGeneral["FreePhysicalMemory"] = s.FreePhysicalMemory
-                subGeneral["LastBootUpTime"] = s.LastBootUpTime
-                subGeneral["Caption"] = s.Caption
-                subGeneral["OSArchitecture"] = s.OSArchitecture
-                subGeneral["SerialNumber"] = s.SerialNumber
-                subGeneral["NumberOfUsers"] = s.NumberOfUsers
-                subGeneral["NumberOfProcesses"] = s.NumberOfProcesses
-                subGeneral["InstallDate"] = s.InstallDate
-                subGeneral["Description"] = s.Description
-                subGeneral["BuildNumber"] = s.BuildNumber
-                
-            for s in wmi.Win32_ComputerSystem(["manufacturer", "model", "systemtype", "totalphysicalmemory", "Domain", "HypervisorPresent", "NumberOfLogicalProcessors", "NumberOfProcessors", "Workgroup", "UserName"]):
-                subGeneral["Manufacturer"] = s.manufacturer
-                subGeneral["Model"] = s.model
-                subGeneral["SystemType"] = s.systemtype
-                subGeneral["Totalphysicalmemory"] = s.totalphysicalmemory
-                subGeneral["Domain"] = s.Domain
-                subGeneral["HypervisorPresent"] = s.HypervisorPresent
-                subGeneral["NumberOfLogicalProcessors"] = s.HypervisorPresent
-                subGeneral["NumberOfProcessors"] = s.HypervisorPresent
-                subGeneral["Workgroup"] = s.Workgroup
-                subGeneral["UserName"] = s.UserName
-            self.General[0] = subGeneral
-            self.mqtt.publish(str(self.ID) + "/Data/General", json.dumps(self.General), qos=1)
-        except:
-            print("An exception occurred in getGeneral")      
+            #print("An exception occurred in getBIOS")         
 
     # Get Startup Items
     def getStartup(self, wmi):
@@ -620,9 +637,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkAdapter["MACAddress"] = s.MACAddress
                 subNetworkAdapterIP = {}
                 ipCount = 0
-                #for ip_address in s.IPAddress:
-                #    ipCount = ipCount +1
-                #    subNetworkAdapterIP[ipCount] = ip_address
+                for ip_address in s.IPAddress:
+                    ipCount = ipCount +1
+                    subNetworkAdapterIP[ipCount] = ip_address
+
                 subNetworkAdapter["IPAddress"] = subNetworkAdapterIP
                 self.NetworkAdapters[count] = subNetworkAdapter
             self.mqtt.publish(str(self.ID) + "/Data/NetworkAdapters", json.dumps(self.NetworkAdapters), qos=1)
@@ -753,6 +771,46 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except:
             print("An exception occurred in getFirewall")
 
+    # Get Agent
+    def getAgent(self, wmi):
+        print("Getting Agent")
+        try:
+            subAgent = {}
+            subAgent["Name"] = Service_Name
+            subAgent["Version"] = Agent_Version
+            self.Agent[0] = subAgent
+            self.mqtt.publish(str(self.ID) + "/Data/Agent", json.dumps(self.Agent), qos=1)
+        except:
+            print("An exception occurred in getAgent")
+
+    # Get Battery
+    def getBattery(self, wmi):
+        print("Getting Battery")
+        try:
+            count = -1
+            for s in wmi.Win32_Battery(["Caption", "Description", "DeviceID", "EstimatedChargeRemaining", "EstimatedRunTime", "ExpectedBatteryLife", "ExpectedLife", "FullChargeCapacity", "MaxRechargeTime", "Name", "PNPDeviceID", "SmartBatteryVersion", "Status", "TimeOnBattery", "TimeToFullCharge", "BatteryStatus"]):
+                count = count +1
+                subBattery = {}
+                subBattery["Caption"] = s.Caption
+                subBattery["Description"] = s.Description
+                subBattery["DeviceID"] = s.DeviceID
+                subBattery["EstimatedChargeRemaining"] = str(s.EstimatedChargeRemaining)
+                subBattery["EstimatedRunTime"] = str(s.EstimatedRunTime)
+                subBattery["ExpectedBatteryLife"] = str(s.ExpectedBatteryLife)
+                subBattery["ExpectedLife"] = str(s.ExpectedLife)
+                subBattery["FullChargeCapacity"] = str(s.FullChargeCapacity)
+                subBattery["MaxRechargeTime"] = str(s.MaxRechargeTime)
+                subBattery["Name"] = s.Name
+                subBattery["PNPDeviceID"] = s.PNPDeviceID
+                subBattery["SmartBatteryVersion"] = s.SmartBatteryVersion
+                subBattery["Status"] = s.Status
+                subBattery["TimeOnBattery"] = str(s.TimeOnBattery)
+                subBattery["TimeToFullCharge"] = str(s.TimeToFullCharge)
+                subBattery["BatteryStatus"] = s.BatteryStatus
+                self.Battery[count] = subBattery
+            self.mqtt.publish(str(self.ID) + "/Data/Battery", json.dumps(self.Battery), qos=1)
+        except:
+            print("An exception occurred in getBattery")
 
     # Get Screenshot
     def getScreenshot(self, wmi):
@@ -780,7 +838,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.mqtt.publish(str(self.ID) + "/Data/CMD", returnData, qos=1)
         except:
             print("An exception occurred in CMD")
-
 
     def start(self):
         self.mqtt.subscribe(self.ID + "/Commands/#", qos=1)
@@ -812,6 +869,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadProduct.start()
         self.threadProcessor.start()
         self.threadFirewall.start()
+        self.threadAgent.start()
+        self.threadBattery.start()
 
         print("Finished Starting Threads")
 
