@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 # TODo:
-# Group, WindowsActivation
+# Group, Firewall, WindowsActivation
 #
-# Agent Settings
+# Agent Settings, Agent Info
 
 import os
 from os.path import exists
@@ -23,9 +23,9 @@ import pkg_resources
 import urllib.request
 
 ################################# SETUP ##################################
-MQTT_Server = "*****"
-MQTT_Username = "********"
-MQTT_Password = "*******!"
+MQTT_Server = "****************"
+MQTT_Username = "****************"
+MQTT_Password = "****************"
 MQTT_Port = 1883
 
 Service_Name = "OpenRMMAgent"
@@ -108,6 +108,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.Firewall = {}
         self.Agent = {}
         self.Battery = {}
+        self.FileSystem = {}
 
         print("Finished Setup")
         print("Configuring Threads")
@@ -139,6 +140,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadFirewall = threading.Thread(target=self.startThread, args=["getFirewall", 120])
         self.threadAgent = threading.Thread(target=self.startThread, args=["getAgent", 180])
         self.threadBattery = threading.Thread(target=self.startThread, args=["getBattery", 30])
+        self.threadFilesystem = threading.Thread(target=self.startThread, args=["getFilesystem", 30]) 
         
         print("Finished Configuring Threads")
         print("Starting Command Loop") 
@@ -190,7 +192,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         if (self.command["topic"] == self.ID + "/Commands/getUsers"): self.getUserAccounts(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/getProcessor"): self.getProcessor(self.wmimain)          
                         if (self.command["topic"] == self.ID + "/Commands/getFirewall"): self.getFirewall(self.wmimain)
-                        if (self.command["topic"] == self.ID + "/Commands/getAgent"): self.getFirewall(self.wmimain) 
+                        if (self.command["topic"] == self.ID + "/Commands/getAgent"): self.getFirewall(self.wmimain)
+                        if (self.command["topic"] == self.ID + "/Commands/getFilesystem"): self.getFilesystem(self.wmimain)
 
                         if (self.command["topic"] == self.ID + "/Commands/getScreenshot"): self.getScreenshot(self.wmimain)
                         if (self.command["topic"] == self.ID + "/Commands/showAlert"): self.showAlert(self.command["payload"])
@@ -812,7 +815,23 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except:
             print("An exception occurred in getBattery")
 
-    # Get Screenshot
+    # Get Filesystem
+    def getFilesystem(self, wmi):
+        print("Getting Filesystem")
+        try:
+            root = "C:"
+            subFilesystem = []
+            for root, dirs, files in os.walk(root):
+                for d in dirs:
+                    subFilesystem.append(os.path.join(root, d))
+                for f in files:
+                    subFilesystem.append(os.path.join(root, f))
+      
+                self.Filesystem["C"] = subFilesystem
+            self.mqtt.publish(str(self.ID) + "/Data/Filesystem", json.dumps(self.Filesystem), qos=1)
+        except:
+            print("An exception occurred in getFilesystem")
+
     def getScreenshot(self, wmi):
         print("Getting Screenshot")
         try:
@@ -871,6 +890,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadFirewall.start()
         self.threadAgent.start()
         self.threadBattery.start()
+        self.threadFilesystem.start()
 
         print("Finished Starting Threads")
 
