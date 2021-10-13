@@ -23,9 +23,9 @@ import pkg_resources
 import urllib.request
 
 ################################# SETUP ##################################
-MQTT_Server = "*********"
-MQTT_Username = "*********"
-MQTT_Password = "*********!"
+MQTT_Server = "****"
+MQTT_Username = "****"
+MQTT_Password = "****"
 MQTT_Port = 1883
 
 Service_Name = "OpenRMMAgent"
@@ -827,7 +827,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def getFilesystem(self, wmi):
         print("Getting Filesystem")
         try:
-            root = "C:"
+            root = "."
             subFilesystem = []
             for root, dirs, files in os.walk(root):
                 for d in dirs:
