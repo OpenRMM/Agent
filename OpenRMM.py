@@ -23,9 +23,9 @@ import pkg_resources
 import urllib.request
 
 ################################# SETUP ##################################
-MQTT_Server = "******"
-MQTT_Username = "******"
-MQTT_Password = "******"
+MQTT_Server = "*********"
+MQTT_Username = "*********"
+MQTT_Password = "*********!"
 MQTT_Port = 1883
 
 Service_Name = "OpenRMMAgent"
@@ -33,6 +33,8 @@ Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
 Agent_Version = "1.0"
+
+LOG_File = "C:\OpenRMM.log"
 
 ###########################################################################
 
@@ -74,8 +76,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.mqtt.on_connect = self.on_connect
             self.mqtt.on_disconnect = self.on_disconnect
             self.mqtt.loop_start()
-        except Exception:
-            print(sys.exc_info()[1])
+        except Exception as e:
+            self.log("SetupMQTT", e)
 
         print("Setting up WMI")
         import wmi
@@ -151,8 +153,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 f = open("ID.txt", "r")
                 self.ID = f.read()
                 self.start()
-        except Exception:
-            print(sys.exc_info()[1])
+        except Exception as e:
+            self.log("SaveID", e)
 
         print("Starting Main")
         self.main()
@@ -164,7 +166,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         
         while self.isrunning:
             try:
-                print("ID is: "+str(self.ID))
+                print("ID is: " + str(self.ID))
                 # Process commands
                 while(True):
                     if "topic" in self.command:
@@ -199,8 +201,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         if (self.command["topic"] == self.ID + "/Commands/showAlert"): self.showAlert(self.command["payload"])
 
                         self.command = {}
-            except Exception:
-                print(sys.exc_info()[1])
+            except Exception as e:
+                self.log("GetCommands", e)
 
     # The callback for when the client receives a CONNACK response from the server.
     def on_connect(self, client, userdata, flags, rc):
@@ -646,9 +648,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkAdapter["MACAddress"] = s.MACAddress
                 subNetworkAdapterIP = {}
                 ipCount = 0
-                for ip_address in s.IPAddress:
-                    ipCount = ipCount +1
-                    subNetworkAdapterIP[ipCount] = ip_address
+                #for ip_address in s.IPAddress:
+                    #ipCount = ipCount +1
+                    #subNetworkAdapterIP[ipCount] = ip_address
 
                 subNetworkAdapter["IPAddress"] = subNetworkAdapterIP
                 self.NetworkAdapters[count] = subNetworkAdapter
@@ -859,8 +861,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         try:
             returnData = subprocess.check_output(command.decode("utf-8"), shell=True)
             self.mqtt.publish(str(self.ID) + "/Data/CMD", returnData, qos=1)
-        except:
-            self.log("CMD", "An exception occurred in CMD")
+        except Exception as e:
+            self.log("CMD", e)
 
     def start(self):
         self.mqtt.subscribe(self.ID + "/Commands/#", qos=1)
@@ -901,6 +903,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def log(self, name, message):
         print("Error in: "+name)
         print(message)
+        try:
+            f = open(LOG_File, "a")
+            f.write("Error in: " + str(name) + ": " + str(message) + "\n")
+            f.close()
+        except Exception as e:
+            print("Error saving to log file")
+            print(e)
 
 if __name__ == "__main__":
     win32serviceutil.HandleCommandLine(OpenRMMAgent)
