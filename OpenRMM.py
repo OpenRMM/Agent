@@ -21,12 +21,15 @@ import win32serviceutil, win32event, win32service
 import servicemanager
 import pkg_resources
 import urllib.request
+import scandir
+from random import randint
+
  
 ################################# SETUP ##################################
-MQTT_Server = "******"
-MQTT_Username = "******"
-MQTT_Password = "*****"
-MQTT_Port = 1883
+MQTT_Server = "***"
+MQTT_Username = "***"
+MQTT_Password = "***"
+MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
@@ -38,7 +41,7 @@ LOG_File = "C:\OpenRMM.log"
 
 ###########################################################################
 
-required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow'}
+required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow', 'scandir'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 
@@ -66,8 +69,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
         try:
             print("Setting up MQTT")
-            import paho.mqtt.client as mqtt
-            self.mqtt = mqtt.Client(client_id=self.hostname, clean_session=True)
+            client_id = self.hostname + str(randint(1000, 10000))
+            self.mqtt = mqtt.Client(client_id=client_id, clean_session=True)
             self.mqtt.username_pw_set(MQTT_Username, MQTT_Password)
             self.mqtt.will_set(self.hostname + "/Status", "Offline", qos=1, retain=True)
             self.mqtt.connect(MQTT_Server, port=MQTT_Port)
@@ -936,20 +939,19 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def getFilesystem(self, wmi, force=False):
         print("Getting Filesystem")
         try:
-            root = "C:\\"
+            root = "C:/"
             FilesystemNew = {}
             subFilesystem = []
-            for root, dirs, files in os.walk(root):
-                for d in dirs:
-                    subFilesystem.append(os.path.join(root, d))
-                for f in files:
-                    subFilesystem.append(os.path.join(root, f))
+            for item in os.listdir(root):
+               subFilesystem.append(os.path.join(root, item))
             FilesystemNew["C"] = subFilesystem
             # Only publish if changed
             if (FilesystemNew != self.Filesystem or force == True):
                 self.Filesystem = FilesystemNew
                 self.mqtt.publish(str(self.ID) + "/Data/Filesystem", json.dumps(self.Filesystem), qos=1)
                 print("Filesystem Changed, Sending Data")
+            else:
+                print("Filesystem is Unchanged")
         except Exception as e:
             self.log("Filesystem", e)
 
