@@ -26,9 +26,9 @@ from random import randint
 
  
 ################################# SETUP ##################################
-MQTT_Server = ""
-MQTT_Username = ""
-MQTT_Password = ""
+MQTT_Server = "****"
+MQTT_Username = "*****"
+MQTT_Password = "******"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
@@ -87,9 +87,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         pythoncom.CoInitialize()
         self.wmimain = wmi.WMI()
 
+        self.AgentSettings = {}
+        self.General = {} 
         self.Services = {}
         self.BIOS = {}
-        self.General = {} 
         self.Startup = {}
         self.OptionalFeatures = {}
         self.Processes = {}
@@ -114,7 +115,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.Agent = {}
         self.Battery = {}
         self.Filesystem = {}
-
+        
         print("Finished Setup")
         print("Configuring Threads")
 
@@ -197,7 +198,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Process commands
             command = message.topic.split("/")
             if(command[1] == "Commands"):
-                if(command[2][0:3] == "get"): threading.Thread(target=self.startThread, args=[command[2], 0, message.payload.decode('utf-8')]).start()
+                if(command[2][0:3] == "get" or command[2][0:3] == "set"): threading.Thread(target=self.startThread, args=[command[2], 0, message.payload.decode('utf-8')]).start()
                 if(command[2] == "showAlert"): self.showAlert(self.command["payload"])
             self.command = {}
         except Exception as e:
@@ -205,22 +206,55 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
 
     def startThread(self, name, minutes=0, payload=""):
-        import wmi
-        pythoncom.CoInitialize()
-        wmi = wmi.WMI()
-        loopCount = 0
-        if(minutes > 0):
-            result = eval("self." + name + "(wmi, False, payload)")
-            while True:
-                time.sleep(1)
-                loopCount = loopCount + 1
-                if (loopCount == (60 * minutes)): # Every x minutes
-                    loopCount = 0
-                    result = eval("self." + name + "(wmi, False, payload)")
-        else:
-            result = eval("self." + name + "(wmi, True, payload)")
+        try:
+            import wmi
+            pythoncom.CoInitialize()
+            wmi = wmi.WMI()
+            loopCount = 0
+            if(minutes > 0):
+                result = eval("self." + name + "(wmi, False, payload)")
+                while True:
+                    time.sleep(1)
+                    loopCount = loopCount + 1
+                    if (loopCount == (60 * minutes)): # Every x minutes
+                        loopCount = 0
+                        result = eval("self." + name + "(wmi, False, payload)")
+            else:
+                result = eval("self." + name + "(wmi, True, payload)")
+        except Exception as e:
+            self.log("StartThread", e)
 
-           
+    
+    # Set Agent Settings, 315/Commands/setAgentSettings
+    def setAgentSettings(self, wmi, force=False, payload=""):
+        print("Setting Agent Settings")
+        try:
+           AgentSettingsNew = json.load(payload)
+           # Validate New Settings
+           interval = AgentSettingsNew['interval']
+
+           AgentSettings = AgentSettingsNew
+        except Exception as e:
+            self.log("AgentSettings", e)
+
+    # Show Alert
+    def setAlert(self, wmi, force=False, payload=""):
+        payload = json.loads(payload)
+        response = ""
+        if(payload["type"] == "alert"): response = pyautogui.alert(payload["message"], payload["title"], 'Okay')
+        if(payload["type"] == "confirm"): response = pyautogui.confirm(payload["message"], payload["title"], ['Yes', 'No'])
+        if(payload["type"] == "prompt"): response = pyautogui.prompt(payload["message"], payload["title"], '')
+        if(payload["type"] == "password"): response = pyautogui.password(payload["message"], payload["title"], '', mask='*')
+        self.mqtt.publish(str(self.ID) + "/Data/Alert", response, qos=1)
+        print("Sending Alert Response: "+response)
+
+    # Send Keys
+    def setKeyboard(self, wmi, force=False, payload=""):
+        time.sleep(0.5)
+        pyautogui.FAILSAFE = True
+        pyautogui.write(payload)
+        print("Sending Keyboard Keys")
+
     # Heartbeat
     def Heartbeat(self, wmi, force=False, payload=""):
         print("Sending Heartbeat")
@@ -944,8 +978,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             FilesystemNew = {}
             subFilesystem = []
             for item in os.listdir(root):
-               subFilesystem.append(os.path.join(root, item))
-            FilesystemNew["C"] = subFilesystem
+               subFilesystem.append(os.path.join(root, item).replace("\\","/"))
+            FilesystemNew[0] = subFilesystem
             # Only publish if changed
             if (FilesystemNew != self.Filesystem or force == True):
                 self.Filesystem = FilesystemNew
@@ -968,10 +1002,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.mqtt.publish(str(self.ID) + "/Data/Screenshot", hex_data, qos=1)
         except Exception as e:
             self.log("Screenshot", e)
-
-    # Show Alert
-    def showAlert(self, text):
-        pyautogui.alert(text)
 
     # Run Code in CMD
     def CMD(self, command):
