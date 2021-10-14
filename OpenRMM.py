@@ -23,9 +23,9 @@ import pkg_resources
 import urllib.request
  
 ################################# SETUP ##################################
-MQTT_Server = "***"
-MQTT_Username = "***"
-MQTT_Password = "***"
+MQTT_Server = "******"
+MQTT_Username = "******"
+MQTT_Password = "*****"
 MQTT_Port = 1883
 
 Service_Name = "OpenRMMAgent"
@@ -116,14 +116,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         print("Configuring Threads")
 
         # Creating Threads
-        self.threadHeartbeat = threading.Thread(target=self.startThread, args=["Heartbeat", 1]) 
+        self.threadHeartbeat = threading.Thread(target=self.startThread, args=["Heartbeat", 5]) 
         self.threadGeneral = threading.Thread(target=self.startThread, args=["getGeneral", 30])
         self.threadBIOS = threading.Thread(target=self.startThread, args=["getBIOS", 60])
         self.threadStartup = threading.Thread(target=self.startThread, args=["getStartup", 30])
         self.threadOptionalFeatures = threading.Thread(target=self.startThread, args=["getOptionalFeatures", 30])
         self.threadProcesses = threading.Thread(target=self.startThread, args=["getProcesses", 30])
         self.threadServices = threading.Thread(target=self.startThread, args=["getServices", 30])
-        self.threadUserAccounts = threading.Thread(target=self.startThread, args=["getUserAccounts", 30])
+        self.threadUserAccounts = threading.Thread(target=self.startThread, args=["getUsers", 30])
         self.threadVideoConfiguration = threading.Thread(target=self.startThread, args=["getVideoConfiguration", 30])
         self.threadLogicalDisk = threading.Thread(target=self.startThread, args=["getLogicalDisk", 30])
         self.threadMappedLogicalDisk = threading.Thread(target=self.startThread, args=["getMappedLogicalDisk", 30])
@@ -134,7 +134,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadDesktopMonitor = threading.Thread(target=self.startThread, args=["getDesktopMonitor", 60])
         self.threadPrinter = threading.Thread(target=self.startThread, args=["getPrinters", 60])
         self.threadNetworkLoginProfile = threading.Thread(target=self.startThread, args=["getNetworkLoginProfile", 60])
-        self.threadNetworkAdapters = threading.Thread(target=self.startThread, args=["getNetworkAdapters", 60])
+        self.threadNetworkAdapters = threading.Thread(target=self.startThread, args=["getNetwork", 60])
         self.threadPnPEntity = threading.Thread(target=self.startThread, args=["getPnPEntitys", 60])
         self.threadSoundDevice = threading.Thread(target=self.startThread, args=["getSoundDevices", 60])
         self.threadSCSIController = threading.Thread(target=self.startThread, args=["getSCSIController", 120])
@@ -165,48 +165,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     def main(self):
         while self.isrunning:
-            try:
-                print("ID is: " + str(self.ID))
-                # Process commands
-                while(True):
-                    if "topic" in self.command:
-                        if (self.command["topic"] == self.ID + "/Commands/getGeneral"): self.getGeneral(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getBIOS"): self.getBIOS(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getStartup"): self.getStartup(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getOptionalFeatures"): self.getOptionalFeatures(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getProcesses"): self.getProcesses(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getServices"): self.getServices(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getVideoConfiguration"): self.getVideoConfiguration(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getDisks"): self.getLogicalDisk(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getMappedLogicalDisk"): self.getMappedLogicalDisk(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getMemory"): self.getPhysicalMemory(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getPointingDevice"): self.getPointingDevice(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getKeyboard"): self.getKeyboard(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getBaseBoard"): self.getBaseBoard(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getDesktopMonitor"): self.getDesktopMonitor(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getPrinter"): self.getPrinters(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getNetworkLoginProfile"): self.getNetworkLoginProfile(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getNetwork"): self.getNetworkAdapters(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getPnPEntitys"): self.getPnPEntitys(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getSoundDevices"): self.getSoundDevices(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getSCSIController"): self.getSCSIController(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getProducts"): self.getProducts(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getUsers"): self.getUserAccounts(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getProcessor"): self.getProcessor(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getFirewall"): self.getFirewall(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getAgent"): self.getFirewall(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/getFilesystem"): self.getFilesystem(self.wmimain, True)
-                        
-                        if (self.command["topic"] == self.ID + "/Commands/getScreenshot"): self.getScreenshot(self.wmimain, True)
-                        if (self.command["topic"] == self.ID + "/Commands/showAlert"): self.showAlert(self.command["payload"])
+            time.sleep(0.1)
 
-                        self.command = {}
-            except Exception as e:
-                self.log("GetCommands", e)
 
     # The callback for when the client receives a CONNACK response from the server.
     def on_connect(self, client, userdata, flags, rc):
-        print("MQTT connected with result code "+str(rc))
+        print("MQTT connected with result code " + str(rc))
         self.mqtt.publish(self.hostname + "/Setup", "true", qos=1, retain=False)
 
     def on_disconnect(self, xclient, userdata, rc):
@@ -226,33 +190,39 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             f.close()
             self.start()
 
-        self.command["topic"] = message.topic
-        self.command["payload"] = message.payload
+        try:
+            # Process commands
+            command = message.topic.split("/")
+            if(command[1] == "Commands"):
+                if(command[2][0:3] == "get"): threading.Thread(target=self.startThread, args=[command[2], 0]).start()
+                if(command[2] == "showAlert"): self.showAlert(self.command["payload"])
+            self.command = {}
+        except Exception as e:
+            self.log("Commands", e)
 
 
-    def startThread(self, name, minutes):
+    def startThread(self, name, minutes=0):
         import wmi
         pythoncom.CoInitialize()
         wmi = wmi.WMI()
         loopCount = 0
-        result = eval("self." + name + "(wmi, False)")
-        while True:
-            time.sleep(1)
-            loopCount = loopCount + 1
-            if (loopCount == (60 * minutes)): # Every x minutes
-                loopCount = 0
-                result = eval("self." + name + "(wmi, False)")
+        if(minutes > 0):
+            result = eval("self." + name + "(wmi, False)")
+            while True:
+                time.sleep(1)
+                loopCount = loopCount + 1
+                if (loopCount == (60 * minutes)): # Every x minutes
+                    loopCount = 0
+                    result = eval("self." + name + "(wmi, False)")
+        else:
+            result = eval("self." + name + "(wmi, True)")
 
-                
+           
     # Heartbeat
     def Heartbeat(self, wmi, force=False):
         print("Sending Heartbeat")
-        Heartbeat = {}
         try:
-            x = datetime.datetime.now()
-            time = x.strftime("%Y-%m-%d %H:%M:%S")
-            Heartbeat['time'] = time
-            self.mqtt.publish(str(self.ID) + "/Data/Heartbeat", json.dumps(Heartbeat), qos=1)
+            self.mqtt.publish(str(self.ID) + "/Data/Heartbeat", "", qos=1)
         except Exception as e:
             self.log("Heartbeat", e)
 
@@ -262,7 +232,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         try:
             GeneralNew = {}
             subGeneral = {}
-            externalIP = urllib.request.urlopen('https://ident.me').read().decode('utf8')
+            externalIP = urllib.request.urlopen('https://v4.ident.me').read().decode('utf8')
             subGeneral["ExternalIP"] = externalIP
 
             for s in wmi.Win32_OperatingSystem(["BuildNumber", "Version", "csname", "FreePhysicalMemory", "LastBootUpTime", "Caption", "OSArchitecture", "SerialNumber", "NumberOfUsers", "NumberOfProcesses", "InstallDate", "Description"]):     
@@ -418,7 +388,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("Processes", e)
 
     # Get User Accounts
-    def getUserAccounts(self, wmi, force=False):
+    def getUsers(self, wmi, force=False):
         print("Getting User Accounts")
         try:
             count = -1
@@ -724,7 +694,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("NetworkLoginProfile", e)
 
     # Get Network Adapters
-    def getNetworkAdapters(self, wmi, force=False):
+    def getNetwork(self, wmi, force=False):
         print("Getting Network Adapters")
         try:
             count = -1
@@ -1046,7 +1016,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         print("Finished Starting Threads")
 
     def log(self, name, message):
-        print("Error in: "+name)
+        print("Error in: " + name)
         print(message)
         try:
             f = open(LOG_File, "a")
