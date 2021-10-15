@@ -17,7 +17,7 @@ import pythoncom
 import pyautogui
 import io, sys
 import PIL
-import win32serviceutil, win32event, win32service
+import win32serviceutil, win32event, win32service, win32con, win32evtlogutil, win32evtlog, win32security, win32api, winerror
 import servicemanager
 import pkg_resources
 import urllib.request
@@ -29,14 +29,14 @@ import speedtest
 ################################# SETUP ##################################
 MQTT_Server = "***"
 MQTT_Username = "***"
-MQTT_Password = "****"
+MQTT_Password = "*****"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.0"
+Agent_Version = "1.1"
 
 LOG_File = "C:\OpenRMM.log"
 
@@ -115,6 +115,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.Agent = {}
         self.Battery = {}
         self.Filesystem = {}
+        self.SharedDrives = {}
+        self.EventLog = {}
         
         print("Finished Setup")
         print("Starting Command Loop") 
@@ -221,6 +223,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         interval["getAgent"] = 180
         interval["getBattery"] = 30
         interval["getFilesystem"] = 30
+        interval["getSharedDrives"] = 30
+        interval["getEventLogs"] = 60
         self.AgentSettings['interval'] = interval
 
     
@@ -231,7 +235,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             AgentSettingsNew = json.loads(payload)
             # Validate New Settings
 
-            AgentSettings = AgentSettingsNew        
+            self.AgentSettings = AgentSettingsNew        
         except Exception as e:
             self.log("setAgentSettings", e)
 
@@ -748,7 +752,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         try:
             count = -1
             NetworkAdaptersNew = {}
-            for s in wmi.Win32_NetworkAdapterConfiguration(["Caption", "Description", "DHCPEnabled", "DHCPLeaseExpires", "DHCPLeaseObtained", "DHCPServer", "DNSDomain", "MACAddress", "Index", "IPAddress"]):
+            for s in wmi.Win32_NetworkAdapterConfiguration(["Caption", "Description", "DHCPEnabled", "DHCPLeaseExpires", "DHCPLeaseObtained", "DHCPServer", "DNSDomain", "MACAddress", "Index", "IPAddress"], IPEnabled=1):
                 count = count +1
                 subNetworkAdapter = {}
                 subNetworkAdapter["Caption"] = s.Caption
@@ -1027,13 +1031,116 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             s.get_best_server()
             s.download(threads=threads)
             s.upload(threads=threads)
+            s.upload(pre_allocate=False)
             s.results.share()
             results = s.results.dict()
             self.mqtt.publish(str(self.ID) + "/Data/OklaSpeedtest", json.dumps(results), qos=1)
         except Exception as e:
             self.log("OklaSpeedtest", e)
 
+    # Get Registry
+    def getRegistry(self, wmi, force=False, payload=""):
+        print("Getting Registry")
+        import wmi1
+        
+        subRegistry = {}
+        try:
+            r = wmi1.Registry()
+            result, names = r.EnumKey(hDefKey=win32con.HKEY_LOCAL_MACHINE, sSubKeyName="Software")
+            for key in names:
+                print(key)
+        except Exception as e:
+            self.log("Registry", e)
 
+    # Get Shared Drives
+    def getSharedDrives(self, wmi, force=False, payload=""):
+        print("Getting Shared Drives")
+        subRegistry = {}
+        try:
+            count = -1
+            SharedDrivesNew = {}
+            for s in wmi.Win32_Share():
+                count = count +1
+                subSharedDrives = {}
+                subSharedDrives["Name"] = s.Name
+                subSharedDrives["Path"] = s.Path
+                SharedDrivesNew[count] = subSharedDrives
+            # Only publish if changed
+            if (SharedDrivesNew != self.SharedDrives or force == True):
+                self.SharedDrives = SharedDrivesNew
+                self.mqtt.publish(str(self.ID) + "/Data/SharedDrives", json.dumps(self.SharedDrives), qos=1)
+                print("Shared Drives Changed, Sending Data")
+        except Exception as e:
+            self.log("SharedDrives", e)
+
+    # Get Event Logs
+    def getEventLogs(self, wmi, force=False, payload="System"):
+        print("Getting Event Logs")    
+        try:
+            if(payload == ""): payload = "System"
+            if(payload=="System" or payload=="Security" or payload=="Application" or payload=="Setup"):
+                events = self.EventLogSupport(payload)
+                count = 0
+                EventLogNew = {}
+                for event in events:
+                    count = count +1
+                    EventLogNew[count] = event
+                    if(count == 100): break
+                # Only publish if changed
+                if (EventLogNew != self.EventLog or force == True):
+                    self.EventLog = EventLogNew
+                    self.mqtt.publish(str(self.ID) + "/Data/EventLog_"+payload, json.dumps(self.EventLog), qos=1)
+                    print("Event Log Changed, Sending Data")
+            else:
+                print("Event Log Type Not found in payload")
+        except Exception as e:
+            self.log("EventLog", e)
+        
+    def EventLogSupport(self, logtype):
+        """
+        Get the event logs from the specified machine according to the
+        logtype (Example: Application) and return it
+        """ 
+        hand = win32evtlog.OpenEventLog("localhost",logtype)
+        total = win32evtlog.GetNumberOfEventLogRecords(hand)
+        print ("Total events in %s = %s" % (logtype, total))
+        flags = win32evtlog.EVENTLOG_BACKWARDS_READ|win32evtlog.EVENTLOG_SEQUENTIAL_READ
+        events = win32evtlog.ReadEventLog(hand,flags,0)
+        evt_dict={win32con.EVENTLOG_AUDIT_FAILURE:'AUDIT_FAILURE',
+                win32con.EVENTLOG_AUDIT_SUCCESS:'AUDIT_SUCCESS',
+                win32con.EVENTLOG_INFORMATION_TYPE:'INFORMATION_TYPE',
+                win32con.EVENTLOG_WARNING_TYPE:'WARNING_TYPE',
+                win32con.EVENTLOG_ERROR_TYPE:'ERROR_TYPE'} 
+        try:
+            events = 1
+            count = 0
+            EventLog = []
+            while events:
+                events=win32evtlog.ReadEventLog(hand,flags,0)
+                for ev_obj in events:
+                    subEventLog = {}
+                    the_time = ev_obj.TimeGenerated.Format() #'12/23/99 15:54:09'
+                    evt_id = str(winerror.HRESULT_CODE(ev_obj.EventID))
+                    computer = str(ev_obj.ComputerName)
+                    cat = ev_obj.EventCategory
+                    record = ev_obj.RecordNumber
+                    msg = win32evtlogutil.SafeFormatMessage(ev_obj, logtype)
+                    source = str(ev_obj.SourceName)
+                    if not ev_obj.EventType in evt_dict.keys():
+                        evt_type = "unknown"
+                    else:
+                        evt_type = str(evt_dict[ev_obj.EventType])
+                    subEventLog["Time"] = the_time
+                    subEventLog["ID"] = evt_id
+                    subEventLog["Type"] = evt_type
+                    subEventLog["Record"] = record
+                    subEventLog["Source"] = source
+                    subEventLog["Message"] = msg
+                    EventLog.append(subEventLog)
+            return EventLog
+        except Exception as e:
+            self.log("EventLogSupport", e)
+                    
     # Run Code in CMD
     def CMD(self, command):
         try:
@@ -1090,6 +1197,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadAgent = threading.Thread(target=self.startThread, args=["getAgent"])
         self.threadBattery = threading.Thread(target=self.startThread, args=["getBattery"])
         self.threadFilesystem = threading.Thread(target=self.startThread, args=["getFilesystem"]) 
+        self.threadSharedDrives = threading.Thread(target=self.startThread, args=["getSharedDrives"])
+        self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "System"])
+        self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Application"])
+        self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Security"])
+        self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Setup"])
+        
         
         print("Finished Configuring Threads")
         print("Starting Threads")
@@ -1122,6 +1235,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.threadAgent.start()
         self.threadBattery.start()
         self.threadFilesystem.start()
+        self.threadSharedDrives.start()
+        self.threadEventLogs_System.start()
+        self.threadEventLogs_Application.start()
+        self.threadEventLogs_Security.start()
+        self.threadEventLogs_Setup.start()
+
         print("Finished Starting Threads")
 
     def log(self, name, message):
