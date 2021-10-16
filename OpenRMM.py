@@ -2,8 +2,7 @@
 
 # TODo:
 # Group, WindowsActivation
-#
-# Agent Settings
+# Need to add rate limit for each GetCommand, for example getBIOS sends old data if asked twice within 30 seconds
 
 import os
 from os.path import exists
@@ -25,18 +24,17 @@ import scandir
 from random import randint
 import speedtest
 
- 
 ################################# SETUP ##################################
-MQTT_Server = "***"
-MQTT_Username = "***"
-MQTT_Password = "*****"
+MQTT_Server = "****"
+MQTT_Username = "*****"
+MQTT_Password = "******"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.1"
+Agent_Version = "1.2"
 
 LOG_File = "C:\OpenRMM.log"
 
@@ -66,7 +64,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         print("Starting Setup")
         self.hostname = os.environ['COMPUTERNAME']
         self.ID = 0
-        self.command = {}
 
         try:
             print("Setting up MQTT")
@@ -83,12 +80,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("SetupMQTT", e)
 
         print("Setting up WMI")
-        import wmi
         pythoncom.CoInitialize()
         self.wmimain = wmi.WMI()
-
+        self.rateLimit = 120
+        self.lastRan = {}
+        self.General_LastRan = 0
         self.AgentSettings = {}
-        self.General = {} 
+
+        self.General = {}
         self.Services = {}
         self.BIOS = {}
         self.Startup = {}
@@ -117,9 +116,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.Filesystem = {}
         self.SharedDrives = {}
         self.EventLog = {}
-        
+
         print("Finished Setup")
-        print("Starting Command Loop") 
         print("Wating for Commands") 
 
         try:
@@ -171,23 +169,136 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except Exception as e:
             self.log("Commands", e)
 
+    def start(self):
+        print("This Computers ID is: " + str(self.ID))
+
+        # Check if got agent settings here, if not load defaults
+        self.mqtt.unsubscribe(self.hostname + "/Commands/#")
+        self.mqtt.will_set(str(self.ID) + "/Status", "Offline", qos=1, retain=True)
+        self.mqtt.subscribe(str(self.ID) + "/Commands/#", qos=1)
+        self.mqtt.publish(str(self.ID) + "/Status", "Online", qos=1, retain=True)
+        print("Waiting for Agent Settings")
+
+        count = 0
+        while (count <= 5):
+            count = count + 1
+            time.sleep(1)
+            if(count == 5):
+                if(self.AgentSettings == {}): self.setAgentDefaults()
+
+        print("Configuring Threads")
+        # Creating Threads
+        self.threadHeartbeat = threading.Thread(target=self.startThread, args=["Heartbeat"]) 
+        self.threadGeneral = threading.Thread(target=self.startThread, args=["getGeneral"])
+        self.threadBIOS = threading.Thread(target=self.startThread, args=["getBIOS"])
+        self.threadStartup = threading.Thread(target=self.startThread, args=["getStartup"])
+        self.threadOptionalFeatures = threading.Thread(target=self.startThread, args=["getOptionalFeatures"])
+        self.threadProcesses = threading.Thread(target=self.startThread, args=["getProcesses"])
+        self.threadServices = threading.Thread(target=self.startThread, args=["getServices"])
+        self.threadUserAccounts = threading.Thread(target=self.startThread, args=["getUsers"])
+        self.threadVideoConfiguration = threading.Thread(target=self.startThread, args=["getVideoConfiguration"])
+        self.threadLogicalDisk = threading.Thread(target=self.startThread, args=["getLogicalDisk"])
+        self.threadMappedLogicalDisk = threading.Thread(target=self.startThread, args=["getMappedLogicalDisk"])
+        self.threadPhysicalMemory = threading.Thread(target=self.startThread, args=["getPhysicalMemory"])
+        self.threadPointingDevice = threading.Thread(target=self.startThread, args=["getPointingDevice"])
+        self.threadKeyboard = threading.Thread(target=self.startThread, args=["getKeyboard"])
+        self.threadBaseBoard = threading.Thread(target=self.startThread, args=["getBaseBoard"])
+        self.threadDesktopMonitor = threading.Thread(target=self.startThread, args=["getDesktopMonitor"])
+        self.threadPrinter = threading.Thread(target=self.startThread, args=["getPrinters"])
+        self.threadNetworkLoginProfile = threading.Thread(target=self.startThread, args=["getNetworkLoginProfile"])
+        self.threadNetworkAdapters = threading.Thread(target=self.startThread, args=["getNetworkAdapters"])
+        self.threadPnPEntity = threading.Thread(target=self.startThread, args=["getPnPEntitys"])
+        self.threadSoundDevice = threading.Thread(target=self.startThread, args=["getSoundDevices"])
+        self.threadSCSIController = threading.Thread(target=self.startThread, args=["getSCSIController"])
+        self.threadProduct = threading.Thread(target=self.startThread, args=["getProducts"])
+        self.threadProcessor = threading.Thread(target=self.startThread, args=["getProcessor"])
+        self.threadFirewall = threading.Thread(target=self.startThread, args=["getFirewall"])
+        self.threadAgent = threading.Thread(target=self.startThread, args=["getAgent"])
+        self.threadBattery = threading.Thread(target=self.startThread, args=["getBattery"])
+        self.threadFilesystem = threading.Thread(target=self.startThread, args=["getFilesystem"]) 
+        self.threadSharedDrives = threading.Thread(target=self.startThread, args=["getSharedDrives"])
+        self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "System"])
+        self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Application"])
+        self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Security"])
+        self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Setup"])
+
+        print("Finished Configuring Threads")
+        print("Starting Threads")
+
+        self.threadHeartbeat.start()
+        self.threadGeneral.start()
+        self.threadBIOS.start()
+        self.threadStartup.start()
+        self.threadOptionalFeatures.start()
+        self.threadProcesses.start()
+        self.threadServices.start()
+        self.threadUserAccounts.start()
+        self.threadVideoConfiguration.start()
+        self.threadLogicalDisk.start()
+        self.threadMappedLogicalDisk.start()
+        self.threadPhysicalMemory.start()
+        self.threadPointingDevice.start()
+        self.threadKeyboard.start()
+        self.threadBaseBoard.start()
+        self.threadDesktopMonitor.start()
+        self.threadPrinter.start()
+        self.threadNetworkLoginProfile.start()
+        self.threadNetworkAdapters.start()
+        self.threadPnPEntity.start()
+        self.threadSoundDevice.start()
+        self.threadSCSIController.start()
+        self.threadProduct.start()
+        self.threadProcessor.start()
+        self.threadFirewall.start()
+        self.threadAgent.start()
+        self.threadBattery.start()
+        self.threadFilesystem.start()
+        self.threadSharedDrives.start()
+        self.threadEventLogs_System.start()
+        self.threadEventLogs_Application.start()
+        self.threadEventLogs_Security.start()
+        self.threadEventLogs_Setup.start()
+        print("Finished Starting Threads")
+
+    # Log
+    def log(self, name, message):
+        print("Error in: " + name)
+        print(message)
+        try:
+            f = open(LOG_File, "a")
+            f.write("Error in: " + str(name) + ": " + str(message) + "\n")
+            f.close()
+        except Exception as e:
+            print("Error saving to log file")
+            print(e)
+
     # Start Thread
-    def startThread(self, name, force=0, payload=""):
+    def startThread(self, functionName, force=0, payload=""):
         try:
             import wmi
             pythoncom.CoInitialize()
             wmi = wmi.WMI()
             loopCount = 0
-            if(force == 0 and name[0:3] == "get" and name in self.AgentSettings['interval']):
-                result = eval("self." + name + "(wmi, False, payload)")
+            if(force == 0 and functionName[0:3] == "get" and functionName in self.AgentSettings['interval']):
+                result = eval("self." + functionName + "(wmi, False, payload)")
                 while True:
                     time.sleep(1)
                     loopCount = loopCount + 1
-                    if (loopCount == (60 * self.AgentSettings['interval'][name])): # Every x minutes
+                    if (loopCount == (60 * self.AgentSettings['interval'][functionName])): # Every x minutes
                         loopCount = 0
-                        result = eval("self." + name + "(wmi, False, payload)")
+                        result = eval("self." + functionName + "(wmi, False, payload)")
             else:
-                result = eval("self." + name + "(wmi, True, payload)")
+                if(functionName not in self.lastRan): self.lastRan[functionName] = 0
+                if(time.time() - self.lastRan[functionName] >= self.rateLimit):
+                    self.lastRan[functionName] = time.time()
+                    result = eval("self." + functionName + "(wmi, True, payload)")
+                else:
+                    print(functionName[3:] + " was stopped via a rate limit, sending cache")
+                    value = getattr(self, functionName[3:])
+                    if(type(value) == bytes): #For Screenshot
+                        self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], value, qos=1)
+                    else:
+                        self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(value), qos=1)
         except Exception as e:
             self.log("StartThread", e)
 
@@ -213,7 +324,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         interval["getDesktopMonitor"] = 60
         interval["getPrinters"] = 30
         interval["getNetworkLoginProfile"] = 30
-        interval["getNetwork"] = 30
+        interval["getNetworkAdapters"] = 30
         interval["getPnPEntitys"] = 60
         interval["getSoundDevices"] = 60
         interval["getSCSIController"] = 120
@@ -226,16 +337,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         interval["getSharedDrives"] = 30
         interval["getEventLogs"] = 60
         self.AgentSettings['interval'] = interval
-
     
     # Set Agent Settings, 315/Commands/setAgentSettings, {"interval": {"getFilesystem": 30, "getBattery": 30}}
     def setAgentSettings(self, wmi, force=False, payload=""):
         print("Got Agent Settings")
         try:
-            AgentSettingsNew = json.loads(payload)
-            # Validate New Settings
-
-            self.AgentSettings = AgentSettingsNew        
+            self.AgentSettings = json.loads(payload)        
         except Exception as e:
             self.log("setAgentSettings", e)
 
@@ -346,7 +453,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 self.mqtt.publish(str(self.ID) + "/Data/Services", json.dumps(self.Services), qos=1)
                 print("Services Changed, Sending Data")
         except Exception as e:
-            self.log("Services", e) 
+            self.log("Services", e)
 
     # Get BIOS
     def getBIOS(self, wmi, force=False, payload=""):  
@@ -747,7 +854,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("NetworkLoginProfile", e)
 
     # Get Network Adapters
-    def getNetwork(self, wmi, force=False, payload=""):
+    def getNetworkAdapters(self, wmi, force=False, payload=""):
         print("Getting Network Adapters")
         try:
             count = -1
@@ -765,11 +872,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkAdapter["Index"] = s.Index
                 subNetworkAdapter["MACAddress"] = s.MACAddress
                 subNetworkAdapterIP = {}
-                ipCount = 0
-                #for ip_address in s.IPAddress:
-                    #ipCount = ipCount +1
-                    #subNetworkAdapterIP[ipCount] = ip_address
-
                 subNetworkAdapter["IPAddress"] = subNetworkAdapterIP
                 NetworkAdaptersNew[count] = subNetworkAdapter
             # Only publish if changed
@@ -1015,8 +1117,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
             with io.BytesIO() as output:          
                 screenshot.save(output, format='JPEG')
-                hex_data = output.getvalue()
-            self.mqtt.publish(str(self.ID) + "/Data/Screenshot", hex_data, qos=1)
+                self.Screenshot = output.getvalue()
+            self.mqtt.publish(str(self.ID) + "/Data/Screenshot", self.Screenshot, qos=1)
         except Exception as e:
             self.log("Screenshot", e)
 
@@ -1075,10 +1177,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Get Event Logs
     def getEventLogs(self, wmi, force=False, payload="System"):
-        print("Getting Event Logs")    
         try:
             if(payload == ""): payload = "System"
             if(payload=="System" or payload=="Security" or payload=="Application" or payload=="Setup"):
+                print("Getting " + payload + " Event Logs") 
                 events = self.EventLogSupport(payload)
                 count = 0
                 EventLogNew = {}
@@ -1090,7 +1192,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if (EventLogNew != self.EventLog or force == True):
                     self.EventLog = EventLogNew
                     self.mqtt.publish(str(self.ID) + "/Data/EventLog_"+payload, json.dumps(self.EventLog), qos=1)
-                    print("Event Log Changed, Sending Data")
+                    print(payload + " Event Log Changed, Sending Data")
             else:
                 print("Event Log Type Not found in payload")
         except Exception as e:
@@ -1148,111 +1250,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.mqtt.publish(str(self.ID) + "/Data/CMD", returnData, qos=1)
         except Exception as e:
             self.log("CMD", e)
-
-    def start(self):
-        print("This Computers ID is: " + str(self.ID))
-
-        # Check if got agent settings here, if not load defaults
-        self.mqtt.unsubscribe(self.hostname + "/Commands/#")
-        self.mqtt.will_set(str(self.ID) + "/Status", "Offline", qos=1, retain=True)
-        self.mqtt.subscribe(str(self.ID) + "/Commands/#", qos=1)
-        self.mqtt.publish(str(self.ID) + "/Status", "Online", qos=1, retain=True)
-
-        print("Waiting for Agent Settings")
-
-        count = 0
-        while (count <= 5):
-            count = count + 1
-            time.sleep(1)
-            if(count == 5):
-                if(self.AgentSettings == {}): self.setAgentDefaults()
-
-        print("Configuring Threads")
-        # Creating Threads
-        self.threadHeartbeat = threading.Thread(target=self.startThread, args=["Heartbeat"]) 
-        self.threadGeneral = threading.Thread(target=self.startThread, args=["getGeneral"])
-        self.threadBIOS = threading.Thread(target=self.startThread, args=["getBIOS"])
-        self.threadStartup = threading.Thread(target=self.startThread, args=["getStartup"])
-        self.threadOptionalFeatures = threading.Thread(target=self.startThread, args=["getOptionalFeatures"])
-        self.threadProcesses = threading.Thread(target=self.startThread, args=["getProcesses"])
-        self.threadServices = threading.Thread(target=self.startThread, args=["getServices"])
-        self.threadUserAccounts = threading.Thread(target=self.startThread, args=["getUsers"])
-        self.threadVideoConfiguration = threading.Thread(target=self.startThread, args=["getVideoConfiguration"])
-        self.threadLogicalDisk = threading.Thread(target=self.startThread, args=["getLogicalDisk"])
-        self.threadMappedLogicalDisk = threading.Thread(target=self.startThread, args=["getMappedLogicalDisk"])
-        self.threadPhysicalMemory = threading.Thread(target=self.startThread, args=["getPhysicalMemory"])
-        self.threadPointingDevice = threading.Thread(target=self.startThread, args=["getPointingDevice"])
-        self.threadKeyboard = threading.Thread(target=self.startThread, args=["getKeyboard"])
-        self.threadBaseBoard = threading.Thread(target=self.startThread, args=["getBaseBoard"])
-        self.threadDesktopMonitor = threading.Thread(target=self.startThread, args=["getDesktopMonitor"])
-        self.threadPrinter = threading.Thread(target=self.startThread, args=["getPrinters"])
-        self.threadNetworkLoginProfile = threading.Thread(target=self.startThread, args=["getNetworkLoginProfile"])
-        self.threadNetworkAdapters = threading.Thread(target=self.startThread, args=["getNetwork"])
-        self.threadPnPEntity = threading.Thread(target=self.startThread, args=["getPnPEntitys"])
-        self.threadSoundDevice = threading.Thread(target=self.startThread, args=["getSoundDevices"])
-        self.threadSCSIController = threading.Thread(target=self.startThread, args=["getSCSIController"])
-        self.threadProduct = threading.Thread(target=self.startThread, args=["getProducts"])
-        self.threadProcessor = threading.Thread(target=self.startThread, args=["getProcessor"])
-        self.threadFirewall = threading.Thread(target=self.startThread, args=["getFirewall"])
-        self.threadAgent = threading.Thread(target=self.startThread, args=["getAgent"])
-        self.threadBattery = threading.Thread(target=self.startThread, args=["getBattery"])
-        self.threadFilesystem = threading.Thread(target=self.startThread, args=["getFilesystem"]) 
-        self.threadSharedDrives = threading.Thread(target=self.startThread, args=["getSharedDrives"])
-        self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "System"])
-        self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Application"])
-        self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Security"])
-        self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Setup"])
-        
-        
-        print("Finished Configuring Threads")
-        print("Starting Threads")
-
-        self.threadHeartbeat.start()
-        self.threadGeneral.start()
-        self.threadBIOS.start()
-        self.threadStartup.start()
-        self.threadOptionalFeatures.start()
-        self.threadProcesses.start()
-        self.threadServices.start()
-        self.threadUserAccounts.start()
-        self.threadVideoConfiguration.start()
-        self.threadLogicalDisk.start()
-        self.threadMappedLogicalDisk.start()
-        self.threadPhysicalMemory.start()
-        self.threadPointingDevice.start()
-        self.threadKeyboard.start()
-        self.threadBaseBoard.start()
-        self.threadDesktopMonitor.start()
-        self.threadPrinter.start()
-        self.threadNetworkLoginProfile.start()
-        self.threadNetworkAdapters.start()
-        self.threadPnPEntity.start()
-        self.threadSoundDevice.start()
-        self.threadSCSIController.start()
-        self.threadProduct.start()
-        self.threadProcessor.start()
-        self.threadFirewall.start()
-        self.threadAgent.start()
-        self.threadBattery.start()
-        self.threadFilesystem.start()
-        self.threadSharedDrives.start()
-        self.threadEventLogs_System.start()
-        self.threadEventLogs_Application.start()
-        self.threadEventLogs_Security.start()
-        self.threadEventLogs_Setup.start()
-
-        print("Finished Starting Threads")
-
-    def log(self, name, message):
-        print("Error in: " + name)
-        print(message)
-        try:
-            f = open(LOG_File, "a")
-            f.write("Error in: " + str(name) + ": " + str(message) + "\n")
-            f.close()
-        except Exception as e:
-            print("Error saving to log file")
-            print(e)
 
 if __name__ == "__main__":
     win32serviceutil.HandleCommandLine(OpenRMMAgent)
