@@ -26,8 +26,8 @@ import speedtest
 
 ################################# SETUP ##################################
 MQTT_Server = "***"
-MQTT_Username = "****"
-MQTT_Password = "*****"
+MQTT_Username = "*******"
+MQTT_Password = "****"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
@@ -123,10 +123,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
         try:
             if(exists("C:\OpenRMM.json")):
+                print("Getting data from C:\OpenRMM.json")
                 f = open("C:\OpenRMM.json", "r")
                 file = json.loads(f.read())
                 self.ID = str(file["ID"])
                 self.start()
+            else:
+                print("Could not get data from file: C:\OpenRMM.json, file dont exist")
         except Exception as e:
             self.log("SaveID", e)
 
@@ -151,8 +154,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     def on_message(self, client, userdata, message):
         print("Received message '" + str(message.payload) + "' on topic '" + message.topic + "' with QoS " + str(message.qos))
-        if (str(message.topic) == str(str(self.ID)) + "/Commands/CMD"): self.CMD(message.payload)
-        if (str(message.topic) == self.hostname + "/Commands/ID"): 
+        if (str(message.topic) == str(self.ID) + "/Commands/CMD"): self.CMD(message.payload)
+        if (str(message.topic) == self.hostname + "/Commands/ID"):
+            print("Got ID From server, Setting Up Agent with ID: " + str(self.ID))
             self.ID = str(message.payload, 'utf-8')
 
             # Save ID to File
@@ -359,7 +363,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(payload["type"] == "confirm"): response = pyautogui.confirm(payload["message"], payload["title"], ['Yes', 'No'])
             if(payload["type"] == "prompt"): response = pyautogui.prompt(payload["message"], payload["title"], '')
             if(payload["type"] == "password"): response = pyautogui.password(payload["message"], payload["title"], '', mask='*')
-            self.mqtt.publish(str(self.ID) + "/Data/Alert", response, qos=1)
+            Alert = {}
+            Alert["Response"] = response
+            self.mqtt.publish(str(self.ID) + "/Data/Alert", json.dumps(Alert), qos=1)
             print("Sending Alert Response: " + response)
         except Exception as e:
             self.log("setAlert", e)
