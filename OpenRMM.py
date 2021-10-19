@@ -25,8 +25,8 @@ from random import randint
 import speedtest
 
 ################################# SETUP ##################################
-MQTT_Server = "****"
-MQTT_Username = "******"
+MQTT_Server = "***"
+MQTT_Username = "****"
 MQTT_Password = "*****"
 MQTT_Port = 1884
 
@@ -116,6 +116,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.Filesystem = {}
         self.SharedDrives = {}
         self.EventLogs = {}
+        self.WindowsUpdate = {}
 
         print("Finished Setup")
         print("Wating for Commands") 
@@ -124,7 +125,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(exists("C:\OpenRMM.json")):
                 f = open("C:\OpenRMM.json", "r")
                 file = json.loads(f.read())
-                self.ID = file["ID"]
+                self.ID = str(file["ID"])
                 self.start()
         except Exception as e:
             self.log("SaveID", e)
@@ -150,14 +151,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     def on_message(self, client, userdata, message):
         print("Received message '" + str(message.payload) + "' on topic '" + message.topic + "' with QoS " + str(message.qos))
-        if (str(message.topic) == self.ID + "/Commands/CMD"): self.CMD(message.payload)
+        if (str(message.topic) == str(str(self.ID)) + "/Commands/CMD"): self.CMD(message.payload)
         if (str(message.topic) == self.hostname + "/Commands/ID"): 
             self.ID = str(message.payload, 'utf-8')
 
             # Save ID to File
             f = open("C:\OpenRMM.json", "w")
             file = {}
-            file["ID"] = self.ID
+            file["ID"] = str(self.ID)
             file["Hostname"] = self.hostname
             f.write(json.dumps(file))
             f.close()
@@ -174,13 +175,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("Commands", e)
 
     def start(self):
-        print("This Computers ID is: " + self.ID)
+        print("This Computers ID is: " + str(self.ID))
 
         # Check if got agent settings here, if not load defaults
         self.mqtt.unsubscribe(self.hostname + "/Commands/#")
-        self.mqtt.will_set(self.ID + "/Status", "Offline", qos=1, retain=True)
-        self.mqtt.subscribe(self.ID + "/Commands/#", qos=1)
-        self.mqtt.publish(self.ID + "/Status", "Online", qos=1, retain=True)
+        self.mqtt.will_set(str(self.ID) + "/Status", "Offline", qos=1, retain=True)
+        self.mqtt.subscribe(str(self.ID) + "/Commands/#", qos=1)
+        self.mqtt.publish(str(self.ID) + "/Status", "Online", qos=1, retain=True)
         print("Waiting for Agent Settings")
 
         count = 0
@@ -298,9 +299,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     print(functionName[3:] + " was stopped via a rate limit, sending cache")
                     value = getattr(self, functionName[3:])
                     if(type(value) == bytes): #For Screenshot
-                        self.mqtt.publish(self.ID + "/Data/" + functionName[3:], value, qos=1)
+                        self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], value, qos=1)
                     else:
-                        self.mqtt.publish(self.ID + "/Data/" + functionName[3:], json.dumps(value), qos=1)
+                        self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(value), qos=1)
         except Exception as e:
             self.log("StartThread", e)
 
@@ -338,6 +339,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         interval["getFilesystem"] = 30
         interval["getSharedDrives"] = 30
         interval["getEventLogs"] = 60
+        interval["getWindowsUpdate"] = 1440
         self.AgentSettings['interval'] = interval
     
     # Set Agent Settings, 315/Commands/setAgentSettings, {"interval": {"getFilesystem": 30, "getBattery": 30}}
@@ -357,7 +359,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(payload["type"] == "confirm"): response = pyautogui.confirm(payload["message"], payload["title"], ['Yes', 'No'])
             if(payload["type"] == "prompt"): response = pyautogui.prompt(payload["message"], payload["title"], '')
             if(payload["type"] == "password"): response = pyautogui.password(payload["message"], payload["title"], '', mask='*')
-            self.mqtt.publish(self.ID + "/Data/Alert", response, qos=1)
+            self.mqtt.publish(str(self.ID) + "/Data/Alert", response, qos=1)
             print("Sending Alert Response: " + response)
         except Exception as e:
             self.log("setAlert", e)
@@ -376,15 +378,45 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def Heartbeat(self, wmi, force=False, payload=""):
         print("Sending Heartbeat")
         try:
-            self.mqtt.publish(self.ID + "/Data/Heartbeat", "", qos=1)
+            self.mqtt.publish(str(self.ID) + "/Data/Heartbeat", "", qos=1)
         except Exception as e:
             self.log("Heartbeat", e)
-    
+
+    # Get Windows Update
+    def getWindowsUpdates(self, wmi, force=False, payload=""):
+        print("Getting Installed Windows Updates")
+        try:
+            WindowsUpdatesNew = {}
+            count = -1
+            objWMIService = win32com.client.Dispatch("WbemScripting.SWbemLocator")
+            objSWbemServices = objWMIService.ConnectServer(strComputer,"root\cimv2")
+            colItems = objSWbemServices.ExecQuery("SELECT * FROM Win32_QuickFixEngineering")
+            for s in colItems:
+                subWindowsUpdates = {}
+                count = count +1
+                subWindowsUpdates["Caption"] = s.Caption
+                subWindowsUpdates["CSName"] = s.CSName
+                subWindowsUpdates["Description"] = s.Description
+                subWindowsUpdates["FixComments"] = s.FixComments
+                subWindowsUpdates["HotFixID"] = s.HotFixID
+                subWindowsUpdates["InstalledBy"] = s.InstalledBy
+                subWindowsUpdates["InstalledOn"] = s.InstalledOn
+                subWindowsUpdates["Status"] = s.Status
+                WindowsUpdatesNew[count] = subWindowsUpdates
+
+            # Only publish if changed
+            if (WindowsUpdateNew != self.WindowsUpdate or force == True):
+                self.WindowsUpdate = WindowsUpdateNew
+                self.mqtt.publish(str(self.ID) + "/Data/WindowsUpdate", json.dumps(self.WindowsUpdate), qos=1)
+                print("Windows Update Changed, Sending Data")
+        except Exception as e:
+            self.log("GetWindowsUpdate", e)
+
     # Get Agent Settings
     def getAgentSettings(self, wmi, force=False, payload=""):
         print("Getting Agent Settings")
         try:
-            self.mqtt.publish(self.ID + "/Data/AgentSettings", json.dumps(self.AgentSettings), qos=1)
+            self.mqtt.publish(str(self.ID) + "/Data/AgentSettings", json.dumps(self.AgentSettings), qos=1)
         except Exception as e:
             self.log("GetAgentSettings", e)
 
@@ -435,7 +467,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (GeneralNew != self.General or force == True):
                 self.General = GeneralNew
-                self.mqtt.publish(self.ID + "/Data/General", json.dumps(self.General), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/General", json.dumps(self.General), qos=1)
                 print("General Changed, Sending Data")
         except Exception as e:
             self.log("General", e)
@@ -461,7 +493,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (ServicesNew != self.Services or force == True):
                 self.Services = ServicesNew
-                self.mqtt.publish(self.ID + "/Data/Services", json.dumps(self.Services), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Services", json.dumps(self.Services), qos=1)
                 print("Services Changed, Sending Data")
         except Exception as e:
             self.log("Services", e)
@@ -485,7 +517,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (BIOSNew != self.BIOS or force == True):
                 self.BIOS = BIOSNew
-                self.mqtt.publish(self.ID + "/Data/BIOS", json.dumps(self.BIOS), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/BIOS", json.dumps(self.BIOS), qos=1)
                 print("BIOS Changed, Sending Data")
         except Exception as e:
             self.log("BIOS", e)         
@@ -507,7 +539,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (StartupNew != self.Startup or force == True):
                 self.Startup = StartupNew
-                self.mqtt.publish(self.ID + "/Data/StartupItems", json.dumps(self.Startup), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/StartupItems", json.dumps(self.Startup), qos=1)
                 print("Startup Changed, Sending Data")
         except Exception as e:
             self.log("Startup", e)      
@@ -532,7 +564,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (OptionalFeaturesNew != self.OptionalFeatures or force == True):
                 self.OptionalFeatures = OptionalFeaturesNew
-                self.mqtt.publish(self.ID + "/Data/OptionalFeatures", json.dumps(self.OptionalFeatures), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/OptionalFeatures", json.dumps(self.OptionalFeatures), qos=1)
                 print("OptionalFeatures Changed, Sending Data")
         except Exception as e:
             self.log("OptionalFeatures", e)
@@ -557,7 +589,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (ProcessesNew != self.Processes or force == True):
                 self.Processes = ProcessesNew
-                self.mqtt.publish(self.ID + "/Data/Processes", json.dumps(self.Processes), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Processes", json.dumps(self.Processes), qos=1)
                 print("Processes Changed, Sending Data")
         except Exception as e:
             self.log("Processes", e)
@@ -587,7 +619,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (UserAccountsNew != self.UserAccounts or force == True):
                 self.UserAccounts = UserAccountsNew
-                self.mqtt.publish(self.ID + "/Data/UserAccounts", json.dumps(self.UserAccounts), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/UserAccounts", json.dumps(self.UserAccounts), qos=1)
                 print("UserAccounts Changed, Sending Data")         
         except Exception as e:
             self.log("UserAccounts", e)
@@ -617,7 +649,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (VideoConfigurationNew != self.VideoConfiguration or force == True):
                 self.VideoConfiguration = VideoConfigurationNew
-                self.mqtt.publish(self.ID + "/Data/VideoConfiguration", json.dumps(self.VideoConfiguration), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/VideoConfiguration", json.dumps(self.VideoConfiguration), qos=1)
                 print("VideoConfiguration Changed, Sending Data")             
         except Exception as e:
             self.log("VideoConfiguration", e)
@@ -649,7 +681,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (LogicalDiskNew != self.LogicalDisk or force == True):
                 self.LogicalDisk = LogicalDiskNew
-                self.mqtt.publish(self.ID + "/Data/LogicalDisk", json.dumps(self.LogicalDisk), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/LogicalDisk", json.dumps(self.LogicalDisk), qos=1)
                 print("LogicalDisk Changed, Sending Data")   
         except Exception as e:
             self.log("LogicalDisk", e)
@@ -681,7 +713,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (MappedLogicalDiskNew != self.MappedLogicalDisk or force == True):
                 self.MappedLogicalDisk = MappedLogicalDiskNew
-                self.mqtt.publish(self.ID + "/Data/MappedLogicalDisk", json.dumps(self.MappedLogicalDisk), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/MappedLogicalDisk", json.dumps(self.MappedLogicalDisk), qos=1)
                 print("MappedLogicalDisk Changed, Sending Data") 
         except Exception as e:
             self.log("MappedLogicalDisk", e)
@@ -714,7 +746,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (PhysicalMemoryNew != self.PhysicalMemory or force == True):
                 self.PhysicalMemory = PhysicalMemoryNew
-                self.mqtt.publish(self.ID + "/Data/PhysicalMemory", json.dumps(self.PhysicalMemory), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/PhysicalMemory", json.dumps(self.PhysicalMemory), qos=1)
                 print("PhysicalMemory Changed, Sending Data") 
         except Exception as e:
             self.log("PhysicalMemory", e)
@@ -739,7 +771,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (PointingDeviceNew != self.PointingDevice or force == True):
                 self.PointingDevice = PointingDeviceNew
-                self.mqtt.publish(self.ID + "/Data/PointingDevice", json.dumps(self.PointingDevice), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/PointingDevice", json.dumps(self.PointingDevice), qos=1)
                 print("PointingDevice Changed, Sending Data") 
         except Exception as e:
             self.log("PointingDevice", e)
@@ -763,7 +795,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (KeyboardNew != self.Keyboard or force == True):
                 self.Keyboard = KeyboardNew
-                self.mqtt.publish(self.ID + "/Data/Keyboard", json.dumps(self.Keyboard), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Keyboard", json.dumps(self.Keyboard), qos=1)
                 print("Keyboard Changed, Sending Data")
         except Exception as e:
             self.log("Keyboard", e)
@@ -792,7 +824,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (BaseBoardNew != self.BaseBoard or force == True):
                 self.BaseBoard = BaseBoardNew
-                self.mqtt.publish(self.ID + "/Data/BaseBoard", json.dumps(self.BaseBoard), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/BaseBoard", json.dumps(self.BaseBoard), qos=1)
                 print("BaseBoard Changed, Sending Data")
         except Exception as e:
             self.log("BaseBoard", e)
@@ -820,7 +852,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (DesktopMonitorNew != self.DesktopMonitor or force == True):
                 self.DesktopMonitor = DesktopMonitorNew
-                self.mqtt.publish(self.ID + "/Data/DesktopMonitor", json.dumps(self.DesktopMonitor), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/DesktopMonitor", json.dumps(self.DesktopMonitor), qos=1)
                 print("DesktopMonitor Changed, Sending Data")
         except Exception as e:
             self.log("DesktopMonitor", e)
@@ -849,7 +881,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (PrinterNew != self.Printer or force == True):
                 self.Printer = PrinterNew
-                self.mqtt.publish(self.ID + "/Data/Printers", json.dumps(self.Printer), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Printers", json.dumps(self.Printer), qos=1)
                 print("Printer Changed, Sending Data")
         except Exception as e:
             self.log("Printers", e)
@@ -874,7 +906,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (NetworkLoginProfileNew != self.NetworkLoginProfile or force == True):
                 self.NetworkLoginProfile = NetworkLoginProfileNew
-                self.mqtt.publish(self.ID + "/Data/NetworkLoginProfile", json.dumps(self.NetworkLoginProfile), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/NetworkLoginProfile", json.dumps(self.NetworkLoginProfile), qos=1)
                 print("NetworkLoginProfile Changed, Sending Data")    
         except Exception as e:
             self.log("NetworkLoginProfile", e)
@@ -904,7 +936,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (NetworkAdaptersNew != self.NetworkAdapters or force == True):
                 self.NetworkAdapters = NetworkAdaptersNew
-                self.mqtt.publish(self.ID + "/Data/NetworkAdapters", json.dumps(self.NetworkAdapters), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/NetworkAdapters", json.dumps(self.NetworkAdapters), qos=1)
                 print("NetworkAdapters Changed, Sending Data")
         except Exception as e:
             self.log("NetworkAdapters", e)
@@ -933,7 +965,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (PnPEntitysNew != self.PnPEntitys or force == True):
                 self.PnPEntitys = PnPEntitysNew
-                self.mqtt.publish(self.ID + "/Data/PnPEntitys", json.dumps(self.PnPEntitys), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/PnPEntitys", json.dumps(self.PnPEntitys), qos=1)
                 print("PnPEntitys Changed, Sending Data")
         except Exception as e:
             self.log("PnPEntitys", e)
@@ -959,7 +991,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (SoundDevicesNew != self.SoundDevices or force == True):
                 self.SoundDevices = SoundDevicesNew
-                self.mqtt.publish(self.ID + "/Data/SoundDevices", json.dumps(self.SoundDevices), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/SoundDevices", json.dumps(self.SoundDevices), qos=1)
                 print("SoundDevices Changed, Sending Data")
         except Exception as e:
             self.log("SoundDevices", e)
@@ -984,7 +1016,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (SCSIControllerNew != self.SCSIController or force == True):
                 self.SCSIController = SCSIControllerNew
-                self.mqtt.publish(self.ID + "/Data/SCSIController", json.dumps(self.SCSIController), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/SCSIController", json.dumps(self.SCSIController), qos=1)
                 print("SCSIController Changed, Sending Data")
         except Exception as e:
             self.log("SCSIController", e)
@@ -1011,7 +1043,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (ProductsNew != self.Products or force == True):
                 self.Products = ProductsNew
-                self.mqtt.publish(self.ID + "/Data/Products", json.dumps(self.Products), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Products", json.dumps(self.Products), qos=1)
                 print("Products Changed, Sending Data")
         except Exception as e:
             self.log("Products", e)
@@ -1044,7 +1076,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (ProcessorNew != self.Processor or force == True):
                 self.Processor = ProcessorNew
-                self.mqtt.publish(self.ID + "/Data/Processor", json.dumps(self.Processor), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Processor", json.dumps(self.Processor), qos=1)
                 print("Processor Changed, Sending Data")
         except Exception as e:
             self.log("Processor", e)
@@ -1063,7 +1095,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (FirewallNew != self.Firewall or force == True):
                 self.Firewall = FirewallNew
-                self.mqtt.publish(self.ID + "/Data/Firewall", json.dumps(self.Firewall), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Firewall", json.dumps(self.Firewall), qos=1)
                 print("Firewall Changed, Sending Data")  
         except Exception as e:
             self.log("Firewall", e)
@@ -1081,7 +1113,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (AgentNew != self.Agent or force == True):
                 self.Agent = AgentNew
-                self.mqtt.publish(self.ID + "/Data/Agent", json.dumps(self.Agent), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Agent", json.dumps(self.Agent), qos=1)
                 print("Agent Changed, Sending Data")
         except Exception as e:
             self.log("Agent", e)
@@ -1116,7 +1148,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (BatteryNew != self.Battery or force == True):
                 self.Battery = BatteryNew
-                self.mqtt.publish(self.ID + "/Data/Battery", json.dumps(self.Battery), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Battery", json.dumps(self.Battery), qos=1)
                 print("Battery Changed, Sending Data")
         except Exception as e:
             self.log("Battery", e)
@@ -1134,7 +1166,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (FilesystemNew != self.Filesystem or force == True):
                 self.Filesystem = FilesystemNew
-                self.mqtt.publish(self.ID + "/Data/Filesystem", json.dumps(self.Filesystem), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/Filesystem", json.dumps(self.Filesystem), qos=1)
                 print("Filesystem Changed, Sending Data")
             else:
                 print("Filesystem is Unchanged")
@@ -1151,7 +1183,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             with io.BytesIO() as output:          
                 screenshot.save(output, format='JPEG')
                 self.Screenshot = output.getvalue()
-            self.mqtt.publish(self.ID + "/Data/Screenshot", self.Screenshot, qos=1)
+            self.mqtt.publish(str(self.ID) + "/Data/Screenshot", self.Screenshot, qos=1)
         except Exception as e:
             self.log("Screenshot", e)
 
@@ -1169,7 +1201,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             s.upload(pre_allocate=False)
             s.results.share()
             results = s.results.dict()
-            self.mqtt.publish(self.ID + "/Data/OklaSpeedtest", json.dumps(results), qos=1)
+            self.mqtt.publish(str(self.ID) + "/Data/OklaSpeedtest", json.dumps(results), qos=1)
         except Exception as e:
             self.log("OklaSpeedtest", e)
 
@@ -1203,7 +1235,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Only publish if changed
             if (SharedDrivesNew != self.SharedDrives or force == True):
                 self.SharedDrives = SharedDrivesNew
-                self.mqtt.publish(self.ID + "/Data/SharedDrives", json.dumps(self.SharedDrives), qos=1)
+                self.mqtt.publish(str(self.ID) + "/Data/SharedDrives", json.dumps(self.SharedDrives), qos=1)
                 print("Shared Drives Changed, Sending Data")
         except Exception as e:
             self.log("SharedDrives", e)
@@ -1224,7 +1256,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 # Only publish if changed
                 if (EventLogsNew != self.EventLogs or force == True):
                     self.EventLogs = EventLogsNew
-                    self.mqtt.publish(self.ID + "/Data/EventLog_"+payload, json.dumps(self.EventLogs), qos=1)
+                    self.mqtt.publish(str(self.ID) + "/Data/EventLog_"+payload, json.dumps(self.EventLogs), qos=1)
                     print(payload + " Event Log Changed, Sending Data")
             else:
                 print("Event Log Type Not found in payload")
@@ -1280,7 +1312,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def CMD(self, command):
         try:
             returnData = subprocess.check_output(command.decode("utf-8"), shell=True)
-            self.mqtt.publish(self.ID + "/Data/CMD", returnData, qos=1)
+            self.mqtt.publish(str(self.ID) + "/Data/CMD", returnData, qos=1)
         except Exception as e:
             self.log("CMD", e)
 
