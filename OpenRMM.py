@@ -23,18 +23,19 @@ import urllib.request
 import scandir
 from random import randint
 import speedtest
+import traceback
 
 ################################# SETUP ##################################
-MQTT_Server = "***"
+MQTT_Server = "****"
 MQTT_Username = "*****"
-MQTT_Password = "*****"
+MQTT_Password = "***"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.3"
+Agent_Version = "1.4"
 
 LOG_File = "C:\OpenRMM.log"
 
@@ -44,9 +45,14 @@ required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow', 'scandir', 'sp
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 
-if missing:
+if(len(missing) > 0):
+    print("Missing Modules, please install with the command: python -m pip install modulename")
+    print(missing)
+    print("Attempting to install modules")
     python = sys.executable
     subprocess.check_call([python, '-m', 'pip', 'install', *missing], stdout=subprocess.DEVNULL)
+    print("Please restart service and try again.")
+    sys.exit()
 
 class OpenRMMAgent(win32serviceutil.ServiceFramework):
     _svc_name_ = Service_Name
@@ -67,7 +73,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.MQTT_flag_connected = 0
 
         try:
-            print("Setting up MQTT")
+            print("MQTT: Starting Setup")
             client_id = self.hostname + str(randint(1000, 10000))
             self.mqtt = mqtt.Client(client_id=client_id, clean_session=True)
             self.mqtt.username_pw_set(MQTT_Username, MQTT_Password)
@@ -80,47 +86,16 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except Exception as e:
             self.log("SetupMQTT", e)
 
-        print("Setting up WMI")
+        print("WMI: Starting Setup")
         pythoncom.CoInitialize()
         self.wmimain = wmi.WMI()
         self.rateLimit = 120
         self.lastRan = {}
         self.ignoreRateLimit = ["getFilesystem", "setAlert"]
         self.AgentSettings = {}
-
-        self.General = {}
-        self.Services = {}
-        self.BIOS = {}
-        self.Startup = {}
-        self.OptionalFeatures = {}
-        self.Processes = {}
-        self.UserAccounts = {}
-        self.VideoConfiguration = {}
-        self.PhysicalMemory = {}
-        self.MappedLogicalDisk = {}
-        self.LogicalDisk = {}
-        self.Keyboard = {}
-        self.PointingDevice = {}
-        self.BaseBoard = {}
-        self.DesktopMonitor = {}
-        self.Printer = {}
-        self.NetworkLoginProfile = {}
-        self.NetworkAdapters = {}
-        self.PnPEntitys = {}
-        self.SoundDevices = {}
-        self.SCSIController = {}
-        self.Products = {}
-        self.Processor = {}
-        self.Firewall = {}
-        self.Agent = {}
-        self.Battery = {}
-        self.Filesystem = {}
-        self.SharedDrives = {}
-        self.EventLogs = {}
-        self.WindowsUpdate = {}
+        self.Cache = {}
 
         print("Finished Setup")
-        print("Wating for Commands") 
 
         try:
             if(exists("C:\OpenRMM.json")):
@@ -146,17 +121,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # The callback for when the client receives a CONNACK response from the server.
     def on_connect(self, client, userdata, flags, rc):
         self.MQTT_flag_connected = 1
-        print("MQTT connected with result code " + str(rc))
+        print("MQTT: Connected with result code " + str(rc))
         if(exists("C:\OpenRMM_ID.txt") == False):
             self.mqtt.publish(self.hostname + "/Setup", "true", qos=1, retain=False)
 
     def on_disconnect(self, xclient, userdata, rc):
         if rc != 0:
-            print("MQTT Unexpected disconnection.")
+            print("MQTT: Unexpected disconnection")
             self.MQTT_flag_connected = 0
 
     def on_message(self, client, userdata, message):
-        print("Received message '" + str(message.payload) + "' on topic '" + message.topic + "' with QoS " + str(message.qos))
+        print("MQTT: Received message '" + str(message.payload) + "' on topic '" + message.topic + "' with QoS " + str(message.qos))
         if (str(message.topic) == str(self.ID) + "/Commands/CMD"): self.CMD(message.payload)
         if (str(message.topic) == self.hostname + "/Commands/ID"):
             self.ID = str(message.payload, 'utf-8')
@@ -200,7 +175,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
         # Creating Threads
         if(self.MQTT_flag_connected == 1):
-            print("Configuring Threads")
+            print("Threads: Configuring")
             self.threadHeartbeat = threading.Thread(target=self.startThread, args=["Heartbeat"]) 
             self.threadGeneral = threading.Thread(target=self.startThread, args=["getGeneral"])
             self.threadBIOS = threading.Thread(target=self.startThread, args=["getBIOS"])
@@ -234,9 +209,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Application"])
             self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Security"])
             self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", 0, "Setup"])
-            print("Finished Configuring Threads")
+            print("Threads: Finished Configuring")
 
-            print("Starting Threads")
+            print("Threads: Starting All")
             self.threadHeartbeat.start()
             self.threadGeneral.start()
             self.threadBIOS.start()
@@ -270,9 +245,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadEventLogs_Application.start()
             self.threadEventLogs_Security.start()
             self.threadEventLogs_Setup.start()
-            print("Finished Starting Threads")     
+            print("Threads: Finished Starting")     
         else:
-            print("Cannot start MQTT is not connected")   
+            print("Start: MQTT is not connected")   
 
     # Log
     def log(self, name, message):
@@ -289,31 +264,56 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # Start Thread
     def startThread(self, functionName, force=0, payload=""):
         try:
+            print("Calling Function: " + functionName[3:])
             if(self.MQTT_flag_connected == 1):
                 pythoncom.CoInitialize()
                 loopCount = 0
+                data = {}
+                # Set Default Value 
+                if(functionName[3:] not in self.Cache): self.Cache[functionName[3:]] = ""
+
+                # Send Data on Startup and on Threads
                 if(force == 0 and functionName[0:3] == "get" and functionName in self.AgentSettings['interval']):
-                    result = eval("self." + functionName + "(wmi, False, payload)")
+                    # Get and Send Data on Startup
+                    self.Cache[functionName[3:]] = eval("self." + functionName + "(wmi, False, payload)")
+
+                    # Loop for periodic updates
                     while True:
                         time.sleep(1)
                         loopCount = loopCount + 1
                         if (loopCount == (60 * self.AgentSettings['interval'][functionName])): # Every x minutes
                             loopCount = 0
-                            result = eval("self." + functionName + "(wmi, False, payload)")
-                else:
-                    if(functionName not in self.lastRan): self.lastRan[functionName] = 0
+                            # Get and send Data
+                            fresh = eval("self." + functionName + "(wmi, False, payload)")
+                            if(fresh != self.Cache[functionName[3:]]): # Only send data if diffrent.
+                                self.Cache[functionName[3:]] = fresh # Set Cache
+                                data["Request"] = ""
+                                data["Response"] = fresh
+                                self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(data), qos=1)
+                else: # This section is ran when asked to get data via a command
+                    # Process Payload
+                    #payload = json.loads(payload)
+                    #if("userID" in payload):
+                    
+                    if(functionName not in self.lastRan): self.lastRan[functionName] = 0 
                     if(time.time() - self.lastRan[functionName] >= self.rateLimit or functionName in self.ignoreRateLimit):
                         self.lastRan[functionName] = time.time()
-                        result = eval("self." + functionName + "(wmi, True, payload)")
-                    else:
-                        print(functionName[3:] + " was stopped via a rate limit, sending cache")
-                        value = getattr(self, functionName[3:])
-                        if(type(value) == bytes): #For Screenshot
-                            self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], value, qos=1)
-                        else:
-                            self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(value), qos=1)
+                        self.Cache[functionName[3:]] = eval("self." + functionName + "(wmi, True, payload)")
+                        print(functionName[3:] + ": Sending Fresh Data")
+                    else: # Rate Limit Reached!
+                        print(functionName[3:] + ": RATE LIMIT, Sending Cache")
+                    
+                if(functionName[3:] == "Screenshot"): # For Screenshot
+                    self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], self.Cache[functionName[3:]], qos=1)
+                else:
+                    data["Request"] = payload
+                    data["Response"] = self.Cache[functionName[3:]]
+                    #self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(data), qos=1)
+                    self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(self.Cache[functionName[3:]]), qos=1)
         except Exception as e:
             self.log("StartThread", e)
+            tb = traceback.format_exc()
+            print(tb)
 
     # Set Agent Default Settings
     def setAgentDefaults(self):
@@ -388,17 +388,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Heartbeat
     def Heartbeat(self, wmi, force=False, payload=""):
-        print("Sending Heartbeat")
-        try:
-            self.mqtt.publish(str(self.ID) + "/Data/Heartbeat", "", qos=1)
-        except Exception as e:
-            self.log("Heartbeat", e)
+        return ""
 
     # Get Windows Update
     def getWindowsUpdates(self, wmi, force=False, payload=""):
-        print("Getting Installed Windows Updates")
         try:
-            WindowsUpdatesNew = {}
+            data = {}
             count = -1
             objWMIService = win32com.client.Dispatch("WbemScripting.SWbemLocator")
             objSWbemServices = objWMIService.ConnectServer(strComputer,"root\cimv2")
@@ -414,29 +409,19 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subWindowsUpdates["InstalledBy"] = s.InstalledBy
                 subWindowsUpdates["InstalledOn"] = s.InstalledOn
                 subWindowsUpdates["Status"] = s.Status
-                WindowsUpdatesNew[count] = subWindowsUpdates
-
-            # Only publish if changed
-            if (WindowsUpdateNew != self.WindowsUpdate or force == True):
-                self.WindowsUpdate = WindowsUpdateNew
-                self.mqtt.publish(str(self.ID) + "/Data/WindowsUpdate", json.dumps(self.WindowsUpdate), qos=1)
-                print("Windows Update Changed, Sending Data")
+                data[count] = subWindowsUpdates
+                return data
         except Exception as e:
             self.log("GetWindowsUpdate", e)
 
     # Get Agent Settings
     def getAgentSettings(self, wmi, force=False, payload=""):
-        print("Getting Agent Settings")
-        try:
-            self.mqtt.publish(str(self.ID) + "/Data/AgentSettings", json.dumps(self.AgentSettings), qos=1)
-        except Exception as e:
-            self.log("GetAgentSettings", e)
+        return self.AgentSettings
 
     # Get General
     def getGeneral(self, wmi, force=False, payload=""):
-        print("Getting General")
         try:
-            GeneralNew = {}
+            data = {}
             subGeneral = {}
 
             # Get Public IP Info
@@ -474,23 +459,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subGeneral["NumberOfProcessors"] = s.HypervisorPresent
                 subGeneral["Workgroup"] = s.Workgroup
                 subGeneral["UserName"] = s.UserName
-            GeneralNew[0] = subGeneral
-
-            # Only publish if changed
-            if (GeneralNew != self.General or force == True):
-                self.General = GeneralNew
-                self.mqtt.publish(str(self.ID) + "/Data/General", json.dumps(self.General), qos=1)
-                print("General Changed, Sending Data")
+            data[0] = subGeneral
+            return data
         except Exception as e:
             self.log("General", e)
 
     # Get Services
     def getServices(self, wmi, force=False, payload=""):
-        print("Getting Services")
         try:
             wmi = wmi.WMI()
             count = -1
-            ServicesNew = {}
+            data = {}
             for s in wmi.Win32_Service(["Caption", "Description", "Status", "DisplayName", "State", "StartMode"]):
                 count = count +1
                 subService = {}
@@ -500,22 +479,16 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subService["State"] = s.State
                 subService["StartMode"] = s.StartMode
                 subService["Caption"] = s.Caption
-                ServicesNew[count] = subService
-
-            # Only publish if changed
-            if (ServicesNew != self.Services or force == True):
-                self.Services = ServicesNew
-                self.mqtt.publish(str(self.ID) + "/Data/Services", json.dumps(self.Services), qos=1)
-                print("Services Changed, Sending Data")
+                data[count] = subService
+            return data
         except Exception as e:
             self.log("Services", e)
 
     # Get BIOS
     def getBIOS(self, wmi, force=False, payload=""):  
-        print("Getting BIOS")
         try:
             wmi = wmi.WMI()
-            BIOSNew = {}
+            data = {}
             for s in wmi.Win32_BIOS(["Caption", "Description", "Manufacturer", "Name", "SerialNumber", "Version", "Status"]):
                 subBIOS = {}
                 subBIOS["Caption"] = s.Caption
@@ -525,43 +498,33 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBIOS["SerialNumber"] = s.SerialNumber
                 subBIOS["Version"] = s.Version
                 subBIOS["Status"] = s.Status
-                BIOSNew[0] = subBIOS
-            # Only publish if changed
-            if (BIOSNew != self.BIOS or force == True):
-                self.BIOS = BIOSNew
-                self.mqtt.publish(str(self.ID) + "/Data/BIOS", json.dumps(self.BIOS), qos=1)
-                print("BIOS Changed, Sending Data")
+                data[0] = subBIOS
+            return data
         except Exception as e:
             self.log("BIOS", e)         
 
     # Get Startup Items
     def getStartup(self, wmi, force=False, payload=""):
-        print("Getting Startup Items")
         try:
             wmi = wmi.WMI()
             count = -1
-            StartupNew = {}
+            data = {}
             for s in wmi.Win32_StartupCommand(["Caption", "Location", "Command"]):
                 count = count +1
                 subStartup = {}
                 subStartup["Location"] = s.Location
                 subStartup["Command"] = s.Command
                 subStartup["Caption"] = s.Caption     
-                StartupNew[count] = subStartup
-            # Only publish if changed
-            if (StartupNew != self.Startup or force == True):
-                self.Startup = StartupNew
-                self.mqtt.publish(str(self.ID) + "/Data/StartupItems", json.dumps(self.Startup), qos=1)
-                print("Startup Changed, Sending Data")
+                data[count] = subStartup
+            return data
         except Exception as e:
             self.log("Startup", e)      
 
     # Get Optional Features
     def getOptionalFeatures(self, wmi, force=False, payload=""):
-        print("Getting OptionalFeatures")
         try:
             wmi = wmi.WMI()
-            OptionalFeaturesNew = {}
+            data = {}
             count = -1
             for s in wmi.Win32_OptionalFeature(["Caption", "Description", "InstallDate", "Status", "Name", "InstallState"]):
                 count = count +1
@@ -572,22 +535,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subOptionalFeatures["Name"] = s.Name
                 subOptionalFeatures["Caption"] = s.Caption
                 subOptionalFeatures["InstallState"] = s.InstallState
-                OptionalFeaturesNew[count] = subOptionalFeatures
-            # Only publish if changed
-            if (OptionalFeaturesNew != self.OptionalFeatures or force == True):
-                self.OptionalFeatures = OptionalFeaturesNew
-                self.mqtt.publish(str(self.ID) + "/Data/OptionalFeatures", json.dumps(self.OptionalFeatures), qos=1)
-                print("OptionalFeatures Changed, Sending Data")
+                data[count] = subOptionalFeatures
+            return data
         except Exception as e:
             self.log("OptionalFeatures", e)
 
     # Get Processes
     def getProcesses(self, wmi, force=False, payload=""):
-        print("Getting Processes")
         try:
             wmi = wmi.WMI()
             count = -1
-            ProcessesNew = {}
+            data = {}
             for s in wmi.Win32_Process(["Caption", "Description", "ParentProcessId", "ProcessId", "Status", "Name"]):
                 count = count +1
                 subProcesses = {}
@@ -597,22 +555,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProcesses["Status"] = s.Status
                 subProcesses["Name"] = s.Name
                 subProcesses["Caption"] = s.Caption
-                ProcessesNew[count] = subProcesses
-            # Only publish if changed
-            if (ProcessesNew != self.Processes or force == True):
-                self.Processes = ProcessesNew
-                self.mqtt.publish(str(self.ID) + "/Data/Processes", json.dumps(self.Processes), qos=1)
-                print("Processes Changed, Sending Data")
+                data[count] = subProcesses
+            return data
         except Exception as e:
             self.log("Processes", e)
 
     # Get User Accounts
     def getUsers(self, wmi, force=False, payload=""):
-        print("Getting User Accounts")
         try:
             wmi = wmi.WMI()
             count = -1
-            UserAccountsNew = {}
+            data = {}
             for s in wmi.Win32_UserAccount(["Caption", "Description", "AccountType", "Disabled", "Domain", "FullName", "LocalAccount", "PasswordChangeable", "PasswordExpires", "PasswordRequired", "Name"]):
                 count = count +1
                 subUserAccounts = {}
@@ -627,22 +580,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subUserAccounts["PasswordRequired"] = s.PasswordRequired
                 subUserAccounts["Caption"] = s.Caption
                 subUserAccounts["Name"] = s.Name 
-                UserAccountsNew[count] = subUserAccounts
-            # Only publish if changed
-            if (UserAccountsNew != self.UserAccounts or force == True):
-                self.UserAccounts = UserAccountsNew
-                self.mqtt.publish(str(self.ID) + "/Data/UserAccounts", json.dumps(self.UserAccounts), qos=1)
-                print("UserAccounts Changed, Sending Data")         
+                data[count] = subUserAccounts
+            return data         
         except Exception as e:
             self.log("UserAccounts", e)
 
     # Get Video Configuration
     def getVideoConfiguration(self, wmi, force=False, payload=""):
-        print("Getting Video Configuration")
         try:
             wmi = wmi.WMI()
             count = -1
-            VideoConfigurationNew = {}
+            data = {}
             for s in wmi.Win32_VideoConfiguration(["Caption", "Description", "AdapterChipType", "AdapterCompatibility", "AdapterDescription", "HorizontalResolution", "MonitorManufacturer", "MonitorType", "Name", "ScreenHeight", "ScreenWidth", "VerticalResolution"]):
                 count = count +1
                 subVideoConfiguration = {}
@@ -657,22 +605,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subVideoConfiguration["ScreenWidth"] = s.ScreenWidth
                 subVideoConfiguration["VerticalResolution"] = s.VerticalResolution
                 subVideoConfiguration["Caption"] = s.Caption
-                VideoConfigurationNew[count] = subVideoConfiguration
-            # Only publish if changed
-            if (VideoConfigurationNew != self.VideoConfiguration or force == True):
-                self.VideoConfiguration = VideoConfigurationNew
-                self.mqtt.publish(str(self.ID) + "/Data/VideoConfiguration", json.dumps(self.VideoConfiguration), qos=1)
-                print("VideoConfiguration Changed, Sending Data")             
+                data[count] = subVideoConfiguration
+            return data            
         except Exception as e:
             self.log("VideoConfiguration", e)
 
     # Get Logical Disk
     def getLogicalDisk(self, wmi, force=False, payload=""):
-        print("Getting Logical Disk")
         try:
             wmi = wmi.WMI()
             count = -1
-            LogicalDiskNew = {}
+            data = {}
             for s in wmi.Win32_LogicalDisk(["Description", "Name", "ProviderName", "Status", "VolumeName", "VolumeSerialNumber", "FileSystem", "DeviceID", "Caption", "PNPDeviceID", "Compressed", "FreeSpace", "Size", "VolumeSerialNumber"]):
                 count = count +1
                 subLogicalDisk = {}
@@ -689,22 +632,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subLogicalDisk["Size"] = s.Size
                 subLogicalDisk["VolumeSerialNumber"] = s.VolumeSerialNumber
                 subLogicalDisk["Caption"] = s.Caption 
-                LogicalDiskNew[count] = subLogicalDisk
-            # Only publish if changed
-            if (LogicalDiskNew != self.LogicalDisk or force == True):
-                self.LogicalDisk = LogicalDiskNew
-                self.mqtt.publish(str(self.ID) + "/Data/LogicalDisk", json.dumps(self.LogicalDisk), qos=1)
-                print("LogicalDisk Changed, Sending Data")   
+                data[count] = subLogicalDisk
+            return data 
         except Exception as e:
             self.log("LogicalDisk", e)
 
     # Get Mapped Logical Disk
     def getMappedLogicalDisk(self, wmi, force=False, payload=""):
-        print("Getting Mapped Logical Disk")
         try:
             wmi = wmi.WMI()
             count = -1
-            MappedLogicalDiskNew = {}
+            data = {}
             for s in wmi.Win32_MappedLogicalDisk(["Caption", "Compressed", "Description", "FileSystem", "FreeSpace", "Name", "PNPDeviceID", "ProviderName", "Size", "Status", "SystemName", "VolumeName", "VolumeSerialNumber"]):
                 count = count +1 
                 subMappedLogicalDisk = {}
@@ -721,22 +659,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subMappedLogicalDisk["VolumeName"] = s.VolumeName
                 subMappedLogicalDisk["VolumeSerialNumber"] = s.VolumeSerialNumber
                 subMappedLogicalDisk["Caption"] = s.Caption
-                MappedLogicalDiskNew[count] = subMappedLogicalDisk
-            # Only publish if changed
-            if (MappedLogicalDiskNew != self.MappedLogicalDisk or force == True):
-                self.MappedLogicalDisk = MappedLogicalDiskNew
-                self.mqtt.publish(str(self.ID) + "/Data/MappedLogicalDisk", json.dumps(self.MappedLogicalDisk), qos=1)
-                print("MappedLogicalDisk Changed, Sending Data") 
+                data[count] = subMappedLogicalDisk
+            return data 
         except Exception as e:
             self.log("MappedLogicalDisk", e)
 
     # Get Physical Memory
     def getPhysicalMemory(self, wmi, force=False, payload=""):
-        print("Getting Physical Memory")
         try:
             wmi = wmi.WMI()
             count = -1
-            PhysicalMemoryNew = {}
+            data = {}
             for s in wmi.Win32_PhysicalMemory(["BankLabel", "Capacity", "ConfiguredClockSpeed", "Description", "DeviceLocator", "FormFactor", "Manufacturer", "MemoryType", "Model", "Name", "PartNumber", "PositionInRow", "Speed", "Status"]):
                 count = count +1
                 subPhysicalMemory = {}
@@ -754,22 +687,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPhysicalMemory["PositionInRow"] = s.PositionInRow
                 subPhysicalMemory["Speed"] = s.Speed
                 subPhysicalMemory["Status"] = s.Status
-                PhysicalMemoryNew[count] = subPhysicalMemory
-            # Only publish if changed
-            if (PhysicalMemoryNew != self.PhysicalMemory or force == True):
-                self.PhysicalMemory = PhysicalMemoryNew
-                self.mqtt.publish(str(self.ID) + "/Data/PhysicalMemory", json.dumps(self.PhysicalMemory), qos=1)
-                print("PhysicalMemory Changed, Sending Data") 
+                data[count] = subPhysicalMemory
+            return data
         except Exception as e:
             self.log("PhysicalMemory", e)
 
     # Get Pointing Device
     def getPointingDevice(self, wmi, force=False, payload=""):
-        print("Getting Pointing Device")
         try:
             wmi = wmi.WMI()
             count = -1
-            PointingDeviceNew = {}
+            data = {}
             for s in wmi.Win32_PointingDevice(["Caption", "Description", "DeviceID", "Manufacturer", "Name", "Status"]):
                 count = count +1
                 subPointingDevice = {}
@@ -779,22 +707,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPointingDevice["Manufacturer"] = s.Manufacturer
                 subPointingDevice["Name"] = s.Name
                 subPointingDevice["Status"] = s.Status
-                PointingDeviceNew[count] = subPointingDevice
-            # Only publish if changed
-            if (PointingDeviceNew != self.PointingDevice or force == True):
-                self.PointingDevice = PointingDeviceNew
-                self.mqtt.publish(str(self.ID) + "/Data/PointingDevice", json.dumps(self.PointingDevice), qos=1)
-                print("PointingDevice Changed, Sending Data") 
+                data[count] = subPointingDevice
+            return data 
         except Exception as e:
             self.log("PointingDevice", e)
 
     # Get Keyboard
     def getKeyboard(self, wmi, force=False, payload=""):
-        print("Getting Keyboard")
         try:
             wmi = wmi.WMI()
             count = -1
-            KeyboardNew = {}
+            data = {}
             for s in wmi.Win32_Keyboard(["Caption", "Description", "DeviceID", "Name", "Status"]):
                 count = count +1
                 subKeyboard = {}
@@ -803,22 +726,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subKeyboard["DeviceID"] = s.DeviceID
                 subKeyboard["Name"] = s.Name
                 subKeyboard["Status"] = s.Status
-                KeyboardNew[count] = subKeyboard
-            # Only publish if changed
-            if (KeyboardNew != self.Keyboard or force == True):
-                self.Keyboard = KeyboardNew
-                self.mqtt.publish(str(self.ID) + "/Data/Keyboard", json.dumps(self.Keyboard), qos=1)
-                print("Keyboard Changed, Sending Data")
+                data[count] = subKeyboard
+            return data
         except Exception as e:
             self.log("Keyboard", e)
 
     # Get BaseBoard
     def getBaseBoard(self, wmi, force=False, payload=""):
-        print("Getting BaseBoard")
         try:
             wmi = wmi.WMI()
             count = -1
-            BaseBoardNew = {}
+            data = {}
             for s in wmi.Win32_BaseBoard(["Caption", "Description", "Manufacturer", "Model", "Name", "Product", "SerialNumber", "Status", "Tag", "Version"]):
                 count = count +1
                 subBaseBoard = {}
@@ -832,22 +750,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBaseBoard["Status"] = s.Status
                 subBaseBoard["Tag"] = s.Tag
                 subBaseBoard["Version"] = s.Version
-                BaseBoardNew[count] = subBaseBoard
-            # Only publish if changed
-            if (BaseBoardNew != self.BaseBoard or force == True):
-                self.BaseBoard = BaseBoardNew
-                self.mqtt.publish(str(self.ID) + "/Data/BaseBoard", json.dumps(self.BaseBoard), qos=1)
-                print("BaseBoard Changed, Sending Data")
+                data[count] = subBaseBoard
+            return data
         except Exception as e:
             self.log("BaseBoard", e)
 
     # Get Desktop Monitor
     def getDesktopMonitor(self, wmi, force=False, payload=""):
-        print("Getting Desktop Monitor")
         try:
             wmi = wmi.WMI()
             count = -1
-            DesktopMonitorNew = {}
+            data = {}
             for s in wmi.Win32_DesktopMonitor(["Caption", "Description", "DeviceID", "MonitorManufacturer", "MonitorType", "Name", "Status", "ScreenHeight", "ScreenWidth"]):
                 count = count +1
                 subDesktopMonitor = {}
@@ -860,22 +773,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subDesktopMonitor["Status"] = s.Status
                 subDesktopMonitor["ScreenHeight"] = s.ScreenHeight
                 subDesktopMonitor["ScreenWidth"] = s.ScreenWidth
-                DesktopMonitorNew[count] = subDesktopMonitor
-            # Only publish if changed
-            if (DesktopMonitorNew != self.DesktopMonitor or force == True):
-                self.DesktopMonitor = DesktopMonitorNew
-                self.mqtt.publish(str(self.ID) + "/Data/DesktopMonitor", json.dumps(self.DesktopMonitor), qos=1)
-                print("DesktopMonitor Changed, Sending Data")
+                data[count] = subDesktopMonitor
+            return data
         except Exception as e:
             self.log("DesktopMonitor", e)
 
     # Get Printers
     def getPrinters(self, wmi, force=False, payload=""):
-        print("Getting Printers")
         try:
             wmi = wmi.WMI()
             count = -1
-            PrinterNew = {}
+            data = {}
             for s in wmi.Win32_Printer(["Caption", "Description", "Default", "DeviceID", "DriverName", "Local", "Name", "Network", "PortName", "Shared"]):
                 count = count +1
                 subPrinter = {}
@@ -889,22 +797,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPrinter["Network"] = s.Network
                 subPrinter["PortName"] = s.PortName
                 subPrinter["Shared"] = s.Shared
-                PrinterNew[count] = subPrinter
-            # Only publish if changed
-            if (PrinterNew != self.Printer or force == True):
-                self.Printer = PrinterNew
-                self.mqtt.publish(str(self.ID) + "/Data/Printers", json.dumps(self.Printer), qos=1)
-                print("Printer Changed, Sending Data")
+                data[count] = subPrinter
+            return data
         except Exception as e:
             self.log("Printers", e)
     
     # Get NetworkLoginProfile
     def getNetworkLoginProfile(self, wmi, force=False, payload=""):
-        print("Getting Network Login Profile")
         try:
             wmi = wmi.WMI()
             count = -1
-            NetworkLoginProfileNew = {}
+            data = {}
             for s in wmi.Win32_NetworkLoginProfile(["Caption", "Description", "FullName", "HomeDirectory", "Name", "NumberOfLogons"]):
                 count = count +1
                 subNetworkLoginProfile = {}
@@ -914,22 +817,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkLoginProfile["HomeDirectory"] = s.HomeDirectory
                 subNetworkLoginProfile["Name"] = s.Name
                 subNetworkLoginProfile["NumberOfLogons"] = s.NumberOfLogons
-                NetworkLoginProfileNew[count] = subNetworkLoginProfile
-            # Only publish if changed
-            if (NetworkLoginProfileNew != self.NetworkLoginProfile or force == True):
-                self.NetworkLoginProfile = NetworkLoginProfileNew
-                self.mqtt.publish(str(self.ID) + "/Data/NetworkLoginProfile", json.dumps(self.NetworkLoginProfile), qos=1)
-                print("NetworkLoginProfile Changed, Sending Data")    
+                data[count] = subNetworkLoginProfile
+            return data    
         except Exception as e:
             self.log("NetworkLoginProfile", e)
 
     # Get Network Adapters
     def getNetworkAdapters(self, wmi, force=False, payload=""):
-        print("Getting Network Adapters")
         try:
             wmi = wmi.WMI()
             count = -1
-            NetworkAdaptersNew = {}
+            data = {}
             for s in wmi.Win32_NetworkAdapterConfiguration(["Caption", "Description", "DHCPEnabled", "DHCPLeaseExpires", "DHCPLeaseObtained", "DHCPServer", "DNSDomain", "MACAddress", "Index", "IPAddress"], IPEnabled=1):
                 count = count +1
                 subNetworkAdapter = {}
@@ -944,22 +842,18 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkAdapter["MACAddress"] = s.MACAddress
                 subNetworkAdapterIP = {}
                 subNetworkAdapter["IPAddress"] = subNetworkAdapterIP
-                NetworkAdaptersNew[count] = subNetworkAdapter
+                data[count] = subNetworkAdapter
             # Only publish if changed
-            if (NetworkAdaptersNew != self.NetworkAdapters or force == True):
-                self.NetworkAdapters = NetworkAdaptersNew
-                self.mqtt.publish(str(self.ID) + "/Data/NetworkAdapters", json.dumps(self.NetworkAdapters), qos=1)
-                print("NetworkAdapters Changed, Sending Data")
+            return data
         except Exception as e:
             self.log("NetworkAdapters", e)
 
     # Get PnP Entitys
     def getPnPEntitys(self, wmi, force=False, payload=""):
-        print("Getting PnP Entitys")
         try:
             wmi = wmi.WMI()
             count = -1
-            PnPEntitysNew = {}
+            data = {}
             for s in wmi.Win32_PnPEntity(["Caption", "Description", "DeviceID", "Manufacturer", "Name", "PNPClass", "PNPDeviceID", "Present", "Service", "Status"]):
                 count = count +1
                 subPnPEntity = {}
@@ -973,22 +867,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPnPEntity["Present"] = s.Present
                 subPnPEntity["Service"] = s.Service
                 subPnPEntity["Status"] = s.Status
-                PnPEntitysNew[count] = subPnPEntity
-            # Only publish if changed
-            if (PnPEntitysNew != self.PnPEntitys or force == True):
-                self.PnPEntitys = PnPEntitysNew
-                self.mqtt.publish(str(self.ID) + "/Data/PnPEntitys", json.dumps(self.PnPEntitys), qos=1)
-                print("PnPEntitys Changed, Sending Data")
+                data[count] = subPnPEntity
+            return data
         except Exception as e:
             self.log("PnPEntitys", e)
 
     # Get Sound Entitys
     def getSoundDevices(self, wmi, force=False, payload=""):
-        print("Getting Sound Devices")
         try:
             wmi = wmi.WMI()
             count = -1
-            SoundDevicesNew = {}
+            data = {}
             for s in wmi.Win32_SoundDevice(["Caption", "Description", "DeviceID", "Manufacturer", "Name", "ProductName", "Status"]):
                 count = count +1
                 subSoundDevice = {}
@@ -999,22 +888,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subSoundDevice["Name"] = s.Name
                 subSoundDevice["ProductName"] = s.ProductName
                 subSoundDevice["Status"] = s.Status
-                SoundDevicesNew[count] = subSoundDevice
-            # Only publish if changed
-            if (SoundDevicesNew != self.SoundDevices or force == True):
-                self.SoundDevices = SoundDevicesNew
-                self.mqtt.publish(str(self.ID) + "/Data/SoundDevices", json.dumps(self.SoundDevices), qos=1)
-                print("SoundDevices Changed, Sending Data")
+                data[count] = subSoundDevice
+            return data
         except Exception as e:
             self.log("SoundDevices", e)
 
     # Get SCSI Controller
     def getSCSIController(self, wmi, force=False, payload=""):
-        print("Getting SCSI Controller")
         try:
             wmi = wmi.WMI()
             count = -1
-            SCSIControllerNew = {}
+            data = {}
             for s in wmi.Win32_SCSIController(["Caption", "Description", "DeviceID", "Manufacturer", "Name", "DriverName"]):
                 count = count +1
                 subSCSIController = {}
@@ -1024,22 +908,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subSCSIController["Manufacturer"] = s.Manufacturer
                 subSCSIController["Name"] = s.Name
                 subSCSIController["DriverName"] = s.DriverName
-                SCSIControllerNew[count] = subSCSIController
-            # Only publish if changed
-            if (SCSIControllerNew != self.SCSIController or force == True):
-                self.SCSIController = SCSIControllerNew
-                self.mqtt.publish(str(self.ID) + "/Data/SCSIController", json.dumps(self.SCSIController), qos=1)
-                print("SCSIController Changed, Sending Data")
+                data[count] = subSCSIController
+            return data
         except Exception as e:
             self.log("SCSIController", e)
 
     # Get Products
     def getProducts(self, wmi, force=False, payload=""):
-        print("Getting Products")
         try:
             wmi = wmi.WMI()
             count = -1
-            ProductsNew = {}
+            data = {}
             for s in wmi.Win32_Product(["Caption", "Description", "IdentifyingNumber", "InstallLocation", "InstallState", "Name", "Vendor", "Version"]):
                 count = count +1
                 subProduct = {}
@@ -1051,22 +930,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProduct["Name"] = s.Name
                 subProduct["Vendor"] = s.Vendor
                 subProduct["Version"] = s.Version      
-                ProductsNew[count] = subProduct
-            # Only publish if changed
-            if (ProductsNew != self.Products or force == True):
-                self.Products = ProductsNew
-                self.mqtt.publish(str(self.ID) + "/Data/Products", json.dumps(self.Products), qos=1)
-                print("Products Changed, Sending Data")
+                data[count] = subProduct
+            return data
         except Exception as e:
             self.log("Products", e)
 
     # Get Processor
     def getProcessor(self, wmi, force=False, payload=""):
-        print("Getting Processor")
         try:
             wmi = wmi.WMI()
             count = -1
-            ProcessorNew = {}
+            data = {}
             for s in wmi.Win32_Processor(["Caption", "CpuStatus", "CurrentClockSpeed", "CurrentVoltage", "Description", "DeviceID", "Manufacturer", "MaxClockSpeed", "Name", "NumberOfCores", "NumberOfLogicalProcessors", "SerialNumber", "ThreadCount", "Version"]):
                 count = count +1
                 subProcessor = {}
@@ -1084,59 +958,44 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProcessor["SerialNumber"] = s.SerialNumber
                 subProcessor["ThreadCount"] = s.ThreadCount
                 subProcessor["Version"] = s.Version
-                ProcessorNew[count] = subProcessor
-            # Only publish if changed
-            if (ProcessorNew != self.Processor or force == True):
-                self.Processor = ProcessorNew
-                self.mqtt.publish(str(self.ID) + "/Data/Processor", json.dumps(self.Processor), qos=1)
-                print("Processor Changed, Sending Data")
+                data[count] = subProcessor
+            return data
         except Exception as e:
             self.log("Processor", e)
 
     # Get Firewall
     def getFirewall(self, wmi, force=False, payload=""):
-        print("Getting Firewall")
         try:
-            FirewallNew = {}
+            data = {}
             subFirewall = {}
             subFirewall['currentProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show currentprofile state', shell=True).decode("utf-8") else 'OFF'
             subFirewall['publicProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show publicProfile state', shell=True).decode("utf-8") else 'OFF'
             subFirewall['privateProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show privateProfile state', shell=True).decode("utf-8") else 'OFF'
             subFirewall['domainProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show domainProfile state', shell=True).decode("utf-8") else 'OFF'
-            FirewallNew[0] = subFirewall
-            # Only publish if changed
-            if (FirewallNew != self.Firewall or force == True):
-                self.Firewall = FirewallNew
-                self.mqtt.publish(str(self.ID) + "/Data/Firewall", json.dumps(self.Firewall), qos=1)
-                print("Firewall Changed, Sending Data")  
+            data[0] = subFirewall
+            return data  
         except Exception as e:
             self.log("Firewall", e)
 
     # Get Agent
     def getAgent(self, wmi, force=False, payload=""):
-        print("Getting Agent")
         try:
-            AgentNew = {}
+            data = {}
             subAgent = {}
             subAgent["Name"] = Service_Name
             subAgent["Version"] = Agent_Version
             subAgent["Path"] = os.path.dirname(os.path.abspath(__file__))
-            AgentNew[0] = subAgent
-            # Only publish if changed
-            if (AgentNew != self.Agent or force == True):
-                self.Agent = AgentNew
-                self.mqtt.publish(str(self.ID) + "/Data/Agent", json.dumps(self.Agent), qos=1)
-                print("Agent Changed, Sending Data")
+            data[0] = subAgent
+            return data
         except Exception as e:
             self.log("Agent", e)
 
     # Get Battery
     def getBattery(self, wmi, force=False, payload=""):
-        print("Getting Battery")
         try:
             wmi = wmi.WMI()
             count = -1
-            BatteryNew = {}
+            data = {}
             for s in wmi.Win32_Battery(["Caption", "Description", "DeviceID", "EstimatedChargeRemaining", "EstimatedRunTime", "ExpectedBatteryLife", "ExpectedLife", "FullChargeCapacity", "MaxRechargeTime", "Name", "PNPDeviceID", "SmartBatteryVersion", "Status", "TimeOnBattery", "TimeToFullCharge", "BatteryStatus"]):
                 count = count +1
                 subBattery = {}
@@ -1156,52 +1015,40 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBattery["TimeOnBattery"] = str(s.TimeOnBattery)
                 subBattery["TimeToFullCharge"] = str(s.TimeToFullCharge)
                 subBattery["BatteryStatus"] = s.BatteryStatus
-                BatteryNew[count] = subBattery
-            # Only publish if changed
-            if (BatteryNew != self.Battery or force == True):
-                self.Battery = BatteryNew
-                self.mqtt.publish(str(self.ID) + "/Data/Battery", json.dumps(self.Battery), qos=1)
-                print("Battery Changed, Sending Data")
+                data[count] = subBattery
+            return data
         except Exception as e:
             self.log("Battery", e)
 
     # Get Filesystem
     def getFilesystem(self, wmi, force=False, root="C://"):
         if(root == ""): root = "C://"
-        print("Getting Filesystem: "+root)
+        print("Getting Filesystem: " + root)
         try:
-            FilesystemNew = {}
+            data = {}
             subFilesystem = []
             for item in os.listdir(root):
                subFilesystem.append(os.path.join(root, item).replace("\\","/"))
-            FilesystemNew[0] = subFilesystem
-            # Only publish if changed
-            if (FilesystemNew != self.Filesystem or force == True):
-                self.Filesystem = FilesystemNew
-                self.mqtt.publish(str(self.ID) + "/Data/Filesystem", json.dumps(self.Filesystem), qos=1)
-                print("Filesystem Changed, Sending Data")
-            else:
-                print("Filesystem is Unchanged")
+            data[0] = subFilesystem
+            return data
         except Exception as e:
             self.log("Filesystem", e)
 
     # Get Screenshot
     def getScreenshot(self, wmi, force=False, payload=""):
-        print("Getting Screenshot")
         try:
             screenshot = pyautogui.screenshot()
             screenshot = screenshot.resize((800,800), PIL.Image.ANTIALIAS)
 
             with io.BytesIO() as output:          
                 screenshot.save(output, format='JPEG')
-                self.Screenshot = output.getvalue()
-            self.mqtt.publish(str(self.ID) + "/Data/Screenshot", self.Screenshot, qos=1)
+                data = output.getvalue()
+            return data
         except Exception as e:
             self.log("Screenshot", e)
 
     # Get Okla Speedtest
     def getOklaSpeedtest(self, wmi, force=False, payload=""):
-        print("Getting Okla Speedtest")
         try:
             servers = []
             threads = None
@@ -1212,15 +1059,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             s.upload(threads=threads)
             s.upload(pre_allocate=False)
             s.results.share()
-            results = s.results.dict()
-            self.mqtt.publish(str(self.ID) + "/Data/OklaSpeedtest", json.dumps(results), qos=1)
+            data = s.results.dict()
+            return data
         except Exception as e:
             self.log("OklaSpeedtest", e)
 
     # Get Registry
     def getRegistry(self, wmi, force=False, payload=""):
-        print("Getting Registry")
-        #wmi = wmi.WMI()
         subRegistry = {}
         try:
             r = wmi.Registry()
@@ -1232,23 +1077,18 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Get Shared Drives
     def getSharedDrives(self, wmi, force=False, payload=""):
-        print("Getting Shared Drives")
         subRegistry = {}
         wmi = wmi.WMI()
         try:
             count = -1
-            SharedDrivesNew = {}
+            data = {}
             for s in wmi.Win32_Share():
                 count = count +1
                 subSharedDrives = {}
                 subSharedDrives["Name"] = s.Name
                 subSharedDrives["Path"] = s.Path
-                SharedDrivesNew[count] = subSharedDrives
-            # Only publish if changed
-            if (SharedDrivesNew != self.SharedDrives or force == True):
-                self.SharedDrives = SharedDrivesNew
-                self.mqtt.publish(str(self.ID) + "/Data/SharedDrives", json.dumps(self.SharedDrives), qos=1)
-                print("Shared Drives Changed, Sending Data")
+                data[count] = subSharedDrives
+            return data
         except Exception as e:
             self.log("SharedDrives", e)
 
@@ -1260,29 +1100,23 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 print("Getting " + payload + " Event Logs") 
                 events = self.EventLogSupport(payload)
                 count = 0
-                EventLogsNew = {}
+                data = {}
                 for event in events:
                     count = count +1
-                    EventLogsNew[count] = event
+                    data[count] = event
                     if(count == 100): break
-                # Only publish if changed
-                if (EventLogsNew != self.EventLogs or force == True):
-                    self.EventLogs = EventLogsNew
-                    self.mqtt.publish(str(self.ID) + "/Data/EventLog_"+payload, json.dumps(self.EventLogs), qos=1)
-                    print(payload + " Event Log Changed, Sending Data")
+                return data
             else:
                 print("Event Log Type Not found in payload")
         except Exception as e:
             self.log("EventLogs", e)
         
     def EventLogSupport(self, logtype):
-        """
-        Get the event logs from the specified machine according to the
-        logtype (Example: Application) and return it
-        """ 
+        # Get the event logs from the specified machine according to the
+        # logtype (Example: Application) and return it
+
         hand = win32evtlog.OpenEventLog("localhost",logtype)
         total = win32evtlog.GetNumberOfEventLogRecords(hand)
-        print ("Total events in %s = %s" % (logtype, total))
         flags = win32evtlog.EVENTLOG_BACKWARDS_READ|win32evtlog.EVENTLOG_SEQUENTIAL_READ
         events = win32evtlog.ReadEventLog(hand,flags,0)
         evt_dict={win32con.EVENTLOG_AUDIT_FAILURE:'AUDIT_FAILURE',
@@ -1320,7 +1154,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except Exception as e:
             self.log("EventLogSupport", e)
                     
-    # Run Code in CMD
+    # Run Code in CMD, Add Cache
     def CMD(self, command):
         try:
             returnData = subprocess.check_output(command.decode("utf-8"), shell=True)
@@ -1330,3 +1164,4 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
 if __name__ == "__main__":
     win32serviceutil.HandleCommandLine(OpenRMMAgent)
+
