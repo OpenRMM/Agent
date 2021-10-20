@@ -26,16 +26,16 @@ import speedtest
 import traceback
 
 ################################# SETUP ##################################
-MQTT_Server = "****"
-MQTT_Username = "*****"
-MQTT_Password = "***"
+MQTT_Server = "***"
+MQTT_Username = "****"
+MQTT_Password = "****"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.4"
+Agent_Version = "1.5"
 
 LOG_File = "C:\OpenRMM.log"
 
@@ -91,10 +91,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.wmimain = wmi.WMI()
         self.rateLimit = 120
         self.lastRan = {}
-        self.ignoreRateLimit = ["getFilesystem", "setAlert"]
+        self.ignoreRateLimit = ["getFilesystem", "setAlert", "getEventLogs"]
         self.AgentSettings = {}
         self.Cache = {}
-
         print("Finished Setup")
 
         try:
@@ -286,14 +285,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                             # Get and send Data
                             fresh = eval("self." + functionName + "(wmi, False, payload)")
                             if(fresh != self.Cache[functionName[3:]]): # Only send data if diffrent.
+                                print(functionName[3:] + ": Sending Fresh Data")
                                 self.Cache[functionName[3:]] = fresh # Set Cache
                                 data["Request"] = ""
                                 data["Response"] = fresh
-                                self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(data), qos=1)
+  
                 else: # This section is ran when asked to get data via a command
                     # Process Payload
-                    #payload = json.loads(payload)
-                    #if("userID" in payload):
+                    try:
+                        payload = json.loads(payload)
+                    except Exception as e:
+                        self.log("StartThread - " + functionName + ": Cannot convert payload to JSON", e)
                     
                     if(functionName not in self.lastRan): self.lastRan[functionName] = 0 
                     if(time.time() - self.lastRan[functionName] >= self.rateLimit or functionName in self.ignoreRateLimit):
@@ -306,12 +308,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(functionName[3:] == "Screenshot"): # For Screenshot
                     self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], self.Cache[functionName[3:]], qos=1)
                 else:
-                    data["Request"] = payload
+                    data["Request"] = payload # Pass request payload to response
                     data["Response"] = self.Cache[functionName[3:]]
-                    #self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(data), qos=1)
-                    self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(self.Cache[functionName[3:]]), qos=1)
+                    self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(data), qos=1)
+                    #self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(self.Cache[functionName[3:]]), qos=1)
         except Exception as e:
-            self.log("StartThread", e)
+            self.log("StartThread - " + functionName, e)
             tb = traceback.format_exc()
             print(tb)
 
@@ -349,29 +351,26 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         interval["getFilesystem"] = 30
         interval["getSharedDrives"] = 30
         interval["getEventLogs"] = 60
-        interval["getWindowsUpdate"] = 1440
+        interval["getWindowsUpdates"] = 1440
         self.AgentSettings['interval'] = interval
     
     # Set Agent Settings, 315/Commands/setAgentSettings, {"interval": {"getFilesystem": 30, "getBattery": 30}}
     def setAgentSettings(self, wmi, force=False, payload=""):
         print("Got Agent Settings")
         try:
-            self.AgentSettings = json.loads(payload)        
+            self.AgentSettings = json.loads(payload["data"])        
         except Exception as e:
             self.log("setAgentSettings", e)
 
     # Show Alert
     def setAlert(self, wmi, force=False, payload=""):
         try:
-            payload = json.loads(payload)
             response = ""
-            if(payload["type"] == "alert"): response = pyautogui.alert(payload["message"], payload["title"], 'Okay')
-            if(payload["type"] == "confirm"): response = pyautogui.confirm(payload["message"], payload["title"], ['Yes', 'No'])
-            if(payload["type"] == "prompt"): response = pyautogui.prompt(payload["message"], payload["title"], '')
-            if(payload["type"] == "password"): response = pyautogui.password(payload["message"], payload["title"], '', mask='*')
-            Alert = {}
-            Alert["Response"] = response
-            self.mqtt.publish(str(self.ID) + "/Data/Alert", json.dumps(Alert), qos=1)
+            if(payload["data"]["type"] == "alert"): response = pyautogui.alert(payload["data"]["message"], payload["data"]["title"], 'Okay')
+            if(payload["data"]["type"] == "confirm"): response = pyautogui.confirm(payload["data"]["message"], payload["data"]["title"], ['Yes', 'No'])
+            if(payload["data"]["type"] == "prompt"): response = pyautogui.prompt(payload["data"]["message"], payload["data"]["title"], '')
+            if(payload["data"]["type"] == "password"): response = pyautogui.password(payload["data"]["message"], payload["data"]["title"], '', mask='*')
+            return response
             print("Sending Alert Response: " + response)
         except Exception as e:
             self.log("setAlert", e)
@@ -381,7 +380,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         try:
             time.sleep(0.5)
             pyautogui.FAILSAFE = True
-            pyautogui.write(payload)
+            pyautogui.write(payload["data"])
             print("Sending Keyboard Keys")
         except Exception as e:
             self.log("setKeyboard", e)
@@ -393,12 +392,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # Get Windows Update
     def getWindowsUpdates(self, wmi, force=False, payload=""):
         try:
+            wmi = wmi.WMI()
             data = {}
             count = -1
-            objWMIService = win32com.client.Dispatch("WbemScripting.SWbemLocator")
-            objSWbemServices = objWMIService.ConnectServer(strComputer,"root\cimv2")
-            colItems = objSWbemServices.ExecQuery("SELECT * FROM Win32_QuickFixEngineering")
-            for s in colItems:
+            for s in wmi.Win32_QuickFixEngineering(["Caption", "CSName", "Description", "FixComments", "HotFixID", "InstalledBy", "InstalledOn", "Status"]):     
                 subWindowsUpdates = {}
                 count = count +1
                 subWindowsUpdates["Caption"] = s.Caption
@@ -412,7 +409,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 data[count] = subWindowsUpdates
                 return data
         except Exception as e:
-            self.log("GetWindowsUpdate", e)
+            self.log("GetWindowsUpdates", e)
 
     # Get Agent Settings
     def getAgentSettings(self, wmi, force=False, payload=""):
@@ -1093,19 +1090,23 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("SharedDrives", e)
 
     # Get Event Logs
-    def getEventLogs(self, wmi, force=False, payload="System"):
+    def getEventLogs(self, wmi, force=False, payload=""):
         try:
-            if(payload == ""): payload = "System"
-            if(payload=="System" or payload=="Security" or payload=="Application" or payload=="Setup"):
-                print("Getting " + payload + " Event Logs") 
-                events = self.EventLogSupport(payload)
-                count = 0
-                data = {}
-                for event in events:
-                    count = count +1
-                    data[count] = event
-                    if(count == 100): break
-                return data
+            if("data" in payload):
+                logType = payload['data']
+                if(logType == ""): logType = "System"
+                if(logType=="System" or logType=="Security" or logType=="Application" or logType=="Setup"):
+                    print("Getting " + logType + " Event Logs") 
+                    events = self.EventLogSupport(logType)
+                    count = 0
+                    data = {}
+                    for event in events:
+                        count = count +1
+                        data[count] = event
+                        if(count == 100): break
+                    return data
+                else:
+                    print("Event Log Type Not found in payload")
             else:
                 print("Event Log Type Not found in payload")
         except Exception as e:
