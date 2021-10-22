@@ -24,18 +24,19 @@ import scandir
 from random import randint
 import speedtest
 import traceback
+import socket
 
 ################################# SETUP ##################################
-MQTT_Server = "***"
-MQTT_Username = "*****"
-MQTT_Password = "****"
+MQTT_Server = "****"
+MQTT_Username = "****"
+MQTT_Password = "******"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.6"
+Agent_Version = "1.7"
 
 LOG_File = "C:\OpenRMM.log"
 
@@ -175,7 +176,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         # Creating Threads
         if(self.MQTT_flag_connected == 1):
             print("Threads: Configuring")
-            self.threadHeartbeat = threading.Thread(target=self.startThread, args=["Heartbeat"]) 
+            self.threadHeartbeat = threading.Thread(target=self.startThread, args=["getHeartbeat"]) 
             self.threadGeneral = threading.Thread(target=self.startThread, args=["getGeneral"])
             self.threadBIOS = threading.Thread(target=self.startThread, args=["getBIOS"])
             self.threadStartup = threading.Thread(target=self.startThread, args=["getStartup"])
@@ -245,7 +246,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadEventLogs_Security.start()
             self.threadEventLogs_Setup.start()
 
-            # Send these only on startup
+            # Send these only on startup, this is technically not threaded and are blocking
             self.startThread("getScreenshot", True)
             self.startThread("getOklaSpeedtest", True)
 
@@ -304,7 +305,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     try:
                         payload = json.loads(payload)
                     except Exception as e:
-                        self.log("StartThread - " + functionName + ": Cannot convert payload to JSON", e)
+                        self.log("StartThread - " + functionName + ": Warning cannot convert payload to JSON", e)
                     
                     if(functionName not in self.lastRan): self.lastRan[functionName] = 0 
                     if(time.time() - self.lastRan[functionName] >= self.rateLimit or functionName in self.ignoreRateLimit):
@@ -329,7 +330,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def setAgentDefaults(self):
         print("Setting Agent Default Settings")
         interval = {}
-        interval["Heartbeat"] = 5
+        interval["getHeartbeat"] = 5
         interval["getGeneral"] = 30
         interval["getBIOS"] = 30
         interval["getStartup"] = 30
@@ -396,7 +397,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("setKeyboard", e)
 
     # Heartbeat
-    def Heartbeat(self, wmi, payload=None):
+    def getHeartbeat(self, wmi, payload=None):
         return ""
 
     # Get Windows Update
@@ -434,6 +435,16 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Get Public IP Info
             IPInfo = urllib.request.urlopen('http://ipinfo.io/json').read().decode('utf8')
             subGeneral["ExternalIP"] = json.loads(IPInfo)
+
+            # Get Local IP Info
+            st = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:       
+                st.connect(('10.255.255.255', 1))
+                subGeneral["PrimaryLocalIP"] = str(st.getsockname()[0])
+            except Exception:
+                subGeneral["PrimaryLocalIP"] = '127.0.0.1'
+            finally:
+                st.close()
 
             # Get Antivirus
             objWMI = GetObject('winmgmts:\\\\.\\root\\SecurityCenter2').InstancesOf('AntiVirusProduct')
@@ -1169,10 +1180,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("EventLogSupport", e)
                     
     # Run Code in CMD, Add Cache
-    def CMD(self, command):
+    def CMD(self, payload):
         try:
-            returnData = subprocess.check_output(command.decode("utf-8"), shell=True)
-            self.mqtt.publish(str(self.ID) + "/Data/CMD", returnData, qos=1)
+            payload = json.loads(payload)
+            if("data" in payload):
+                command = payload["data"]
+                returnData = subprocess.check_output(command, shell=True)
+                self.mqtt.publish(str(self.ID) + "/Data/CMD", returnData, qos=1)
         except Exception as e:
             self.log("CMD", e)
 
