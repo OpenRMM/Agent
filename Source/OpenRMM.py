@@ -25,16 +25,16 @@ import socket
 import datetime
 
 ################################# SETUP ##################################
-MQTT_Server = "*****"
-MQTT_Username = "******"
-MQTT_Password = "******"
+MQTT_Server = "****"
+MQTT_Username = "****"
+MQTT_Password = "*****"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.9"
+Agent_Version = "1.9.1"
 
 LOG_File = "C:\OpenRMM.log"
 DEBUG = False
@@ -208,7 +208,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadPrinter = threading.Thread(target=self.startThread, args=["getPrinters"])
             self.threadNetworkLoginProfile = threading.Thread(target=self.startThread, args=["getNetworkLoginProfile"])
             self.threadNetworkAdapters = threading.Thread(target=self.startThread, args=["getNetworkAdapters"])
-            self.threadPnPEntity = threading.Thread(target=self.startThread, args=["getPnPEntitys"])
+            self.threadPnPEntity = threading.Thread(target=self.startThread, args=["getPnPEntities"])
             self.threadSoundDevice = threading.Thread(target=self.startThread, args=["getSoundDevices"])
             self.threadSCSIController = threading.Thread(target=self.startThread, args=["getSCSIController"])
             self.threadProduct = threading.Thread(target=self.startThread, args=["getProducts"])
@@ -218,10 +218,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadBattery = threading.Thread(target=self.startThread, args=["getBattery"])
             self.threadFilesystem = threading.Thread(target=self.startThread, args=["getFilesystem"]) 
             self.threadSharedDrives = threading.Thread(target=self.startThread, args=["getSharedDrives"])
-            self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["getEventLogs", 0, '{"data":"System"}'])
-            self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", 0, '{"data":"Application"}'])
-            self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", 0, '{"data":"Security"}'])
-            self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", 0, '{"data":"Setup"}'])
+            self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["getEventLogs", 0, json.loads('{"data":"System"}')])
+            self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", 0, json.loads('{"data":"Application"}')])
+            self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", 0, json.loads('{"data":"Security"}')])
+            self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", 0, json.loads('{"data":"Setup"}')])
             self.log("Start", "Threads: Finished Configuring")
 
             self.log("Start", "Threads: Starting All")
@@ -259,13 +259,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadEventLogs_Application.start()
             self.threadEventLogs_Security.start()
             self.threadEventLogs_Setup.start()
+            self.log("Start", "Threads: Finished Starting") 
 
             # Send these only on startup, this is technically not threaded and are blocking
             self.startThread("getScreenshot", True)
+            self.startThread("getRegistry", True)
             self.startThread("getWindowsActivation", True)
             self.startThread("getOklaSpeedtest", True)
-            self.startThread("getAgentLog", True)
-            self.log("Start", "Threads: Finished Starting")     
+            self.startThread("getAgentLog", True)      
         else:
             self.log("Start", "MQTT is not connected", "Warn")   
 
@@ -371,7 +372,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         interval["getPrinters"] = 30
         interval["getNetworkLoginProfile"] = 30
         interval["getNetworkAdapters"] = 30
-        interval["getPnPEntitys"] = 60
+        interval["getPnPEntities"] = 60
         interval["getSoundDevices"] = 60
         interval["getSCSIController"] = 120
         interval["getProducts"] = 60
@@ -948,8 +949,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(DEBUG): print(traceback.format_exc())
             self.log("NetworkAdapters", e, "Error")
 
-    # Get PnP Entitys
-    def getPnPEntitys(self, wmi, payload=None):
+    # Get PnP Entities
+    def getPnPEntities(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
             count = -1
@@ -971,7 +972,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
-            self.log("PnPEntitys", e, "Error")
+            self.log("PnPEntities", e, "Error")
 
     # Get Sound Entitys
     def getSoundDevices(self, wmi, payload=None):
@@ -1213,7 +1214,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def getEventLogs(self, wmi, payload=None):
         try:
             if("data" in payload):
-                logType = payload['data']
+                logType = payload["data"]
                 if(logType == ""): logType = "System"
                 if(logType=="System" or logType=="Security" or logType=="Application" or logType=="Setup"):
                     self.log("getEventLogs", "Getting " + logType + " Event Logs") 
