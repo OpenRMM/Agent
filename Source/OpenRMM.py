@@ -23,11 +23,13 @@ import speedtest
 import traceback
 import socket
 import datetime
+import rsa
+from cryptography.fernet import Fernet
 
 ################################# SETUP ##################################
-MQTT_Server = "****"
-MQTT_Username = "****"
-MQTT_Password = "*****"
+MQTT_Server = "******"
+MQTT_Username = "******"
+MQTT_Password = "*******"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
@@ -41,7 +43,7 @@ DEBUG = False
 
 ###########################################################################
 
-required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow', 'scandir', 'speedtest-cli'}
+required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow', 'scandir', 'speedtest-cli', 'cryptography'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 
@@ -65,65 +67,66 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.isrunning = False
 
     def SvcDoRun(self):
-        print("   ____                   _____  __  __ __  __ ")
-        print("  / __ \                 |  __ \|  \/  |  \/  |")
-        print(" | |  | |_ __   ___ _ __ | |__) | \  / | \  / |")
-        print(" | |  | | '_ \ / _ \ '_ \|  _  /| |\/| | |\/| |")
-        print(" | |__| | |_) |  __/ | | | | \ \| |  | | |  | |")
-        print("  \____/| .__/ \___|_| |_|_|  \_\_|  |_|_|  |_|")
-        print("        | |                                    ")
-        print("        |_|                                    ")
-        print("Github: https://github.com/OpenRMM/")
-        print("Created By: Brad & Brandon Sanders")
-        print("")
-        os.system('color B')
-        time.sleep(0.5)  
-
-        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE,servicemanager.PYS_SERVICE_STARTED,(self._svc_name_, ''))
-        self.AgentLog = []
-        self.isrunning = True
-        self.log("Setup", "Agent Starting")
-        self.hostname = os.environ['COMPUTERNAME']
-        self.ID = 0
-        self.MQTT_flag_connected = 0
-
         try:
-            self.log("Setup", "Starting MQTT")
-            client_id = self.hostname + str(randint(1000, 10000))
-            self.mqtt = mqtt.Client(client_id=client_id, clean_session=True)
-            self.mqtt.username_pw_set(MQTT_Username, MQTT_Password)
-            self.mqtt.will_set(self.hostname + "/Status", "Offline", qos=1, retain=True)
-            self.mqtt.connect(MQTT_Server, port=MQTT_Port)
-            self.mqtt.subscribe(self.hostname + "/Commands/#", qos=1)
-            self.mqtt.on_message = self.on_message
-            self.mqtt.on_connect = self.on_connect
-            self.mqtt.on_disconnect = self.on_disconnect
-            self.mqtt.loop_start()
+            print("   ____                   _____  __  __ __  __ ")
+            print("  / __ \                 |  __ \|  \/  |  \/  |")
+            print(" | |  | |_ __   ___ _ __ | |__) | \  / | \  / |")
+            print(" | |  | | '_ \ / _ \ '_ \|  _  /| |\/| | |\/| |")
+            print(" | |__| | |_) |  __/ | | | | \ \| |  | | |  | |")
+            print("  \____/| .__/ \___|_| |_|_|  \_\_|  |_|_|  |_|")
+            print("        | |                                    ")
+            print("        |_|                                    ")
+            print("Github: https://github.com/OpenRMM/")
+            print("Created By: Brad & Brandon Sanders")
+            print("")
+            os.system('color B')
+            time.sleep(0.5)  
+
+            servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE,servicemanager.PYS_SERVICE_STARTED,(self._svc_name_, ''))
+            self.AgentLog = []
+            self.isrunning = True
+            self.log("Setup", "Agent Starting")
+            self.hostname = os.environ['COMPUTERNAME']
+            self.AgentSettings = {}
+            self.MQTT_flag_connected = 0
+            self.rateLimit = 120
+            self.lastRan = {}
+            self.ignoreRateLimit = ["getFilesystem", "setAlert", "getEventLogs"]
+            self.Cache = {}
+
+            try:
+                if(exists("C:\OpenRMM.json")):
+                    self.log("Setup", "Getting data from C:\OpenRMM.json")
+                    f = open("C:\OpenRMM.json", "r")
+                    self.AgentSettings = json.loads(f.read())
+                    self.Public_Key = rsa.PublicKey.load_pkcs1(self.AgentSettings["Setup"]["Public_Key"].encode('utf8'))
+                else:
+                    self.log("Read ID From File", "Could not get data from file: C:\OpenRMM.json, file dont exist", "Warn")
+            except Exception as e:
+                self.log("Read ID From File", e, "Error")
+
+            try:
+                self.log("Setup", "Starting MQTT")
+                client_id = self.hostname + str(randint(1000, 10000))
+                self.mqtt = mqtt.Client(client_id=client_id, clean_session=True)
+                self.mqtt.username_pw_set(MQTT_Username, MQTT_Password)
+                self.mqtt.will_set(self.hostname + "/Status", "Offline", qos=1, retain=True)
+                self.mqtt.connect(MQTT_Server, port=MQTT_Port)
+                self.mqtt.subscribe(self.hostname + "/Commands/#", qos=1)
+                self.mqtt.on_message = self.on_message
+                self.mqtt.on_connect = self.on_connect
+                self.mqtt.on_disconnect = self.on_disconnect
+                self.mqtt.loop_start()
+            except Exception as e:
+                self.log("MQTT Setup", e, "Error")
+
+            self.log("Setup", "Starting WMI")
+            pythoncom.CoInitialize()
+            self.wmimain = wmi.WMI()
+            self.main()
+
         except Exception as e:
-            self.log("MQTT Setup", e, "Error")
-
-        self.log("Setup", "Starting WMI")
-        pythoncom.CoInitialize()
-        self.wmimain = wmi.WMI()
-        self.rateLimit = 120
-        self.lastRan = {}
-        self.ignoreRateLimit = ["getFilesystem", "setAlert", "getEventLogs"]
-        self.AgentSettings = {}
-        self.Cache = {}
-
-        try:
-            if(exists("C:\OpenRMM.json")):
-                self.log("Setup", "Getting data from C:\OpenRMM.json")
-                f = open("C:\OpenRMM.json", "r")
-                file = json.loads(f.read())
-                self.ID = str(file["ID"])
-                self.start()
-            else:
-                self.log("Read ID From File", "Could not get data from file: C:\OpenRMM.json, file dont exist", "Warn")
-        except Exception as e:
-            self.log("Read ID From File", e, "Error")
-
-        self.main()
+            if(DEBUG): print(traceback.format_exc())
 
     def stop(self):
         self.isrunning = False
@@ -136,54 +139,85 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.MQTT_flag_connected = 1
         self.log("MQTT", "Connected to server: " + MQTT_Server + " with result code " + str(rc))
         if(exists("C:\OpenRMM.json") == False):
-            self.log("MQTT", "Sending setup command to server")
-            self.mqtt.publish(self.hostname + "/Setup", "true", qos=1, retain=False)
+            self.log("MQTT", "Sending New Agent command to server")
+            self.mqtt.publish(self.hostname + "/Agent/New", "true", qos=1, retain=False)
+        else:
+            if("Setup" in self.AgentSettings):
+                self.getReady()
 
     def on_disconnect(self, xclient, userdata, rc):
-        if rc != 0:
-            self.log("MQTT", "Unexpected disconnection", "Warn")
-            self.MQTT_flag_connected = 0
+        self.MQTT_flag_connected = 0
+        self.log("MQTT", "Unexpected disconnection", "Warn")
 
     def on_message(self, client, userdata, message):
         print("MQTT: Received message '" + str(message.payload) + "' on topic '" + message.topic + "' with QoS " + str(message.qos))
-        if (str(message.topic) == str(self.ID) + "/Commands/CMD"): self.CMD(message.payload)
-        if (str(message.topic) == self.hostname + "/Commands/ID" and self.ID == 0):
-            self.ID = str(message.payload, 'utf-8')
-            self.log("MQTT", "Got ID From server, Setting Up Agent with ID: " + str(self.ID))
-    
-            # Save ID to File
+
+        # Ready is sent on agent start, first step in connection is public key exchange
+        if (str(message.topic) == self.hostname + "/Commands/New"):
+            self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
+            self.log("MQTT", "Got ID From server, Setting Up Agent with ID: " + str(self.AgentSettings["Setup"]["ID"]))
+            if("Setup" in self.AgentSettings):
+                self.getReady()
+        
+        if(str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Ready"):
+            self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
+            self.log("MQTT", "Setting Up Agent with ID: " + str(self.AgentSettings["Setup"]["ID"]))
+
+            # Save setup to File
             f = open("C:\OpenRMM.json", "w")
-            file = {}
-            file["ID"] = str(self.ID)
-            file["Hostname"] = self.hostname
-            f.write(json.dumps(file))
+            f.write(json.dumps(self.AgentSettings))
             f.close()
-            self.start()
 
-        try:
-            # Process commands
-            command = message.topic.split("/")
-            if(command[1] == "Commands"):
-                if(command[2][0:3] == "get" or command[2][0:3] == "set"): threading.Thread(target=self.startThread, args=[command[2], True, message.payload.decode('utf-8')]).start()
-            self.command = {}
-        except Exception as e:
-            self.log("Commands", e, "Error")
+            self.getSet()
 
-    def start(self):
-        self.log("Start", "This Computers ID is: " + str(self.ID) + ", Agent Version: " + Agent_Version)
+        if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Go"):
+            self.Go()
+
+        # Make sure we have the base settings, ID, Salt then start listining to commands
+        if( "Setup" in self.AgentSettings):
+            if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/CMD"): self.CMD(message.payload)
+
+            try:
+                # Process commands
+                command = message.topic.split("/")
+                if(command[1] == "Commands"):
+                    if(command[2][0:3] == "get" or command[2][0:3] == "set"): threading.Thread(target=self.startThread, args=[command[2], True, message.payload.decode('utf-8')]).start()
+                self.command = {}
+            except Exception as e:
+                self.log("Commands", e, "Error")
+
+    def getReady(self):
+        # Prep MQTT
+        self.mqtt.unsubscribe(self.hostname + "/Commands/#")
+        self.mqtt.subscribe(str(self.AgentSettings["Setup"]["ID"]) + "/Commands/#", qos=1)
+
+        # Send ready to server
+        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Ready", "true", qos=1, retain=False)
+
+    def getSet(self):
+        self.Public_Key = rsa.PublicKey.load_pkcs1(self.AgentSettings["Setup"]["Public_Key"].encode('utf8'))
+
+        # Generate salt
+        self.AgentSettings["Setup"]["salt"] = str(Fernet.generate_key(), "utf-8")
+        self.Fernet = Fernet(self.AgentSettings["Setup"]["salt"])
+        print("Salt is: " + self.AgentSettings["Setup"]["salt"])
+
+        # Send RSA encrypted key to the server
+        self.log("Encryption", "Sending salt to server")
+        RSAEncryptedSalt = rsa.encrypt(self.AgentSettings["Setup"]["salt"].encode(), self.Public_Key)
+        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Set", RSAEncryptedSalt, qos=1, retain=False)
+
+    def Go(self):
+        self.log("Start", "Recieved Go command from server. Agent Version: " + Agent_Version)
 
         # Check if got agent settings here, if not load defaults
-        self.mqtt.unsubscribe(self.hostname + "/Commands/#")
-        self.mqtt.subscribe(str(self.ID) + "/Commands/#", qos=1)
-        self.mqtt.publish(str(self.ID) + "/Status", "Online", qos=1, retain=True)
         self.log("Start", "Waiting for Agent Settings")
-
         count = 0
         while (count <= 5):
             count = count + 1
             time.sleep(1)
             if(count == 5):
-                if(self.AgentSettings == {}): self.setAgentDefaults()
+                if("Configurable" not in self.AgentSettings): self.setAgentDefaults()
 
         # Creating Threads
         if(self.MQTT_flag_connected == 1):
@@ -265,8 +299,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.startThread("getScreenshot", True)
             self.startThread("getRegistry", True)
             self.startThread("getWindowsActivation", True)
-            self.startThread("getOklaSpeedtest", True)
-            self.startThread("getAgentLog", True)      
+            #self.startThread("getOklaSpeedtest", True)
+            self.startThread("getAgentLog", True)
+            self.startThread("getAgentSettings", True)   
         else:
             self.log("Start", "MQTT is not connected", "Warn")   
 
@@ -301,19 +336,20 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(functionName[3:] not in self.Cache): self.Cache[functionName[3:]] = ""
 
                 # Send Data on Startup and on Threads
-                if(force == False and functionName[0:3] == "get" and functionName in self.AgentSettings['interval']):
+                if(force == False and functionName[0:3] == "get" and functionName in self.AgentSettings['Configurable']['Interval']):
                     # Get and Send Data on Startup
                     self.log("Thread", functionName[3:] + ": Sending New Data")
                     self.Cache[functionName[3:]] = eval("self." + functionName + "(wmi, payload)")
                     data["Request"] = payload # Pass request payload to response
                     data["Response"] = self.Cache[functionName[3:]]
-                    self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(data), qos=1)
+                    encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+                    self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
                     
                     # Loop for periodic updates
                     while True:
                         time.sleep(1)
                         loopCount = loopCount + 1
-                        if (loopCount == (60 * self.AgentSettings['interval'][functionName])): # Every x minutes
+                        if (loopCount == (60 * self.AgentSettings['Configurable']['Interval'][functionName])): # Every x minutes
                             loopCount = 0
                             # Get and send Data
                             New = eval("self." + functionName + "(wmi, payload)")
@@ -339,11 +375,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         self.log("Thread", functionName[3:] + ": RATE LIMIT, Sending Cache")
                     
                 if(functionName[3:] == "Screenshot"): # For Screenshot
-                    self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], self.Cache[functionName[3:]], qos=1)
+                    encMessage = self.Fernet.encrypt(self.Cache[functionName[3:]])
+                    self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
                 else:
                     data["Request"] = payload # Pass request payload to response
                     data["Response"] = self.Cache[functionName[3:]]
-                    self.mqtt.publish(str(self.ID) + "/Data/" + functionName[3:], json.dumps(data), qos=1)
+                    encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+                    self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("Thread - " + functionName, e, "Error")
@@ -351,46 +389,46 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # Set Agent Default Settings
     def setAgentDefaults(self):
         self.log("Start", "Setting Agent Default Settings")
-        interval = {}
-        interval["getHeartbeat"] = 5
-        interval["getAgentLog"] = 15
-        interval["getGeneral"] = 30
-        interval["getBIOS"] = 30
-        interval["getStartup"] = 30
-        interval["getOptionalFeatures"] = 30
-        interval["getProcesses"] = 30
-        interval["getServices"] = 30
-        interval["getUsers"] = 30
-        interval["getVideoConfiguration"] = 30
-        interval["getLogicalDisk"] = 30
-        interval["getMappedLogicalDisk"] = 30
-        interval["getPhysicalMemory"] = 30
-        interval["getPointingDevice"] = 60
-        interval["getKeyboard"] = 60
-        interval["getBaseBoard"] = 60
-        interval["getDesktopMonitor"] = 60
-        interval["getPrinters"] = 30
-        interval["getNetworkLoginProfile"] = 30
-        interval["getNetworkAdapters"] = 30
-        interval["getPnPEntities"] = 60
-        interval["getSoundDevices"] = 60
-        interval["getSCSIController"] = 120
-        interval["getProducts"] = 60
-        interval["getProcessor"] = 60
-        interval["getFirewall"] = 60
-        interval["getAgent"] = 180
-        interval["getBattery"] = 30
-        interval["getFilesystem"] = 30
-        interval["getSharedDrives"] = 30
-        interval["getEventLogs"] = 60
-        interval["getWindowsUpdates"] = 1440
-        self.AgentSettings['interval'] = interval
+        Interval = {}
+        Interval["getHeartbeat"] = 5
+        Interval["getAgentLog"] = 15
+        Interval["getGeneral"] = 30
+        Interval["getBIOS"] = 30
+        Interval["getStartup"] = 30
+        Interval["getOptionalFeatures"] = 30
+        Interval["getProcesses"] = 30
+        Interval["getServices"] = 30
+        Interval["getUsers"] = 30
+        Interval["getVideoConfiguration"] = 30
+        Interval["getLogicalDisk"] = 30
+        Interval["getMappedLogicalDisk"] = 30
+        Interval["getPhysicalMemory"] = 30
+        Interval["getPointingDevice"] = 60
+        Interval["getKeyboard"] = 60
+        Interval["getBaseBoard"] = 60
+        Interval["getDesktopMonitor"] = 60
+        Interval["getPrinters"] = 30
+        Interval["getNetworkLoginProfile"] = 30
+        Interval["getNetworkAdapters"] = 30
+        Interval["getPnPEntities"] = 60
+        Interval["getSoundDevices"] = 60
+        Interval["getSCSIController"] = 120
+        Interval["getProducts"] = 60
+        Interval["getProcessor"] = 60
+        Interval["getFirewall"] = 60
+        Interval["getAgent"] = 180
+        Interval["getBattery"] = 30
+        Interval["getFilesystem"] = 30
+        Interval["getSharedDrives"] = 30
+        Interval["getEventLogs"] = 60
+        Interval["getWindowsUpdates"] = 1440
+        self.AgentSettings['Configurable'] = {'Interval': Interval}
     
-    # Set Agent Settings, 315/Commands/setAgentSettings, {"interval": {"getFilesystem": 30, "getBattery": 30}}
+    # Set Agent Settings, 315/Commands/setAgentSettings, {"Interval": {"getFilesystem": 30, "getBattery": 30}}
     def setAgentSettings(self, wmi, payload=None):
         self.log("MQTT", "Got Agent Settings")
         try:
-            self.AgentSettings = json.loads(payload["data"])        
+            self.AgentSettings['Configurable'] = json.loads(payload["data"])        
         except Exception as e:
             self.log("setAgentSettings", e, "Error")
 
@@ -471,7 +509,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Get Agent Settings
     def getAgentSettings(self, wmi, payload=None):
-        return self.AgentSettings
+        return self.AgentSettings['Configurable']
 
     # Windows Activation
     def getWindowsActivation(self, wmi, payload=None):
@@ -1284,7 +1322,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if("data" in payload):
                 command = payload["data"]
                 returnData = subprocess.check_output(command, shell=True)
-                self.mqtt.publish(str(self.ID) + "/Data/CMD", returnData, qos=1)
+                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/CMD", returnData, qos=1)
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("CMD", e, "Error")
