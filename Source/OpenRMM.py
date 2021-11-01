@@ -27,8 +27,8 @@ import rsa
 from cryptography.fernet import Fernet
 
 ################################# SETUP ##################################
-MQTT_Server = "******"
-MQTT_Username = "******"
+MQTT_Server = "***"
+MQTT_Username = "*****"
 MQTT_Password = "*******"
 MQTT_Port = 1884
 
@@ -36,14 +36,14 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.9.2"
+Agent_Version = "1.9.3"
 
 LOG_File = "C:\OpenRMM.log"
 DEBUG = False
 
 ###########################################################################
 
-required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow', 'scandir', 'speedtest-cli', 'cryptography'}
+required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow', 'scandir', 'speedtest-cli', 'cryptography', 'rsa'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 
@@ -167,11 +167,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             f = open("C:\OpenRMM.json", "w")
             f.write(json.dumps(self.AgentSettings))
             f.close()
-
             self.getSet()
 
         if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Go"):
             self.Go()
+
+        if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Sync"):
+            self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
+            self.getSet("Sync")
 
         # Make sure we have the base settings, ID, Salt then start listining to commands
         if( "Setup" in self.AgentSettings):
@@ -194,7 +197,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         # Send ready to server
         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Ready", "true", qos=1, retain=False)
 
-    def getSet(self):
+    def getSet(self, setType="Startup"):
         self.Public_Key = rsa.PublicKey.load_pkcs1(self.AgentSettings["Setup"]["Public_Key"].encode('utf8'))
 
         # Generate salt
@@ -205,7 +208,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         # Send RSA encrypted key to the server
         self.log("Encryption", "Sending salt to server")
         RSAEncryptedSalt = rsa.encrypt(self.AgentSettings["Setup"]["salt"].encode(), self.Public_Key)
-        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Set", RSAEncryptedSalt, qos=1, retain=False)
+
+        if(setType == "Startup"):
+            self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Set", RSAEncryptedSalt, qos=1, retain=False)
+        elif(setType == "Sync"):
+            print("################## SENDING SYNC ########################")
+            self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Sync", RSAEncryptedSalt, qos=1, retain=False)
 
     def Go(self):
         self.log("Start", "Recieved Go command from server. Agent Version: " + Agent_Version)
@@ -390,7 +398,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def setAgentDefaults(self):
         self.log("Start", "Setting Agent Default Settings")
         Interval = {}
-        Interval["getHeartbeat"] = 5
+        Interval["getHeartbeat"] = 1
         Interval["getAgentLog"] = 15
         Interval["getGeneral"] = 30
         Interval["getBIOS"] = 30
