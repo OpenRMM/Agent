@@ -36,6 +36,8 @@ py -m pip install wmi
 py -m pip install pillow
 py -m pip install scandir
 py -m pip install speedtest-cli
+py -m pip install rsa
+py -m pip install cryptography
 echo "Moving DLLs"
 echo moving %USERPROFILE%\AppData\Roaming\Python\Python39\site-packages\pywin32_system32
 Xcopy /E /I %USERPROFILE%\AppData\Roaming\Python\Python39\site-packages\pywin32_system32 %USERPROFILE%\AppData\Roaming\Python\Python39\site-packages\win32\lib\pywin32_system32
