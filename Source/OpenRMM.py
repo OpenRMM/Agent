@@ -27,16 +27,16 @@ import rsa
 from cryptography.fernet import Fernet
 
 ################################# SETUP ##################################
-MQTT_Server = "*************"
-MQTT_Username = "***********"
-MQTT_Password = "****************"
+MQTT_Server = "****"
+MQTT_Username = "****"
+MQTT_Password = "***"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.9.4"
+Agent_Version = "1.9.5"
 
 LOG_File = "C:\OpenRMM.log"
 DEBUG = False
@@ -184,11 +184,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(command[1] == "Commands"):
                     # Command Prompt
                     if(command[2] == "CMD"):
-                        encMessage = self.Fernet.encrypt(self.CMD(message.payload))
+                        encMessage = self.Fernet.encrypt(json.dumps(self.CMD(message.payload)).encode())
                         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/CMD", encMessage, qos=1)
                     # Other Commands
                     elif(command[2][0:3] == "get" or command[2][0:3] == "set"): 
-                        threading.Thread(target=self.startThread, args=[command[2], True, message.payload.decode('utf-8')]).start()
+                        threading.Thread(target=self.startThread, args=[command[2], False, message.payload.decode('utf-8')]).start()
                 self.command = {}
             except Exception as e:
                 self.log("Commands", e, "Error")
@@ -232,87 +232,50 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
         # Creating Threads
         if(self.MQTT_flag_connected == 1):
-            self.log("Start", "Threads: Configuring")
-            self.threadHeartbeat = threading.Thread(target=self.startThread, args=["getHeartbeat"])
-            self.threadAgentLog = threading.Thread(target=self.startThread, args=["getAgentLog"])
-            self.threadGeneral = threading.Thread(target=self.startThread, args=["getGeneral"])
-            self.threadBIOS = threading.Thread(target=self.startThread, args=["getBIOS"])
-            self.threadStartup = threading.Thread(target=self.startThread, args=["getStartup"])
-            self.threadOptionalFeatures = threading.Thread(target=self.startThread, args=["getOptionalFeatures"])
-            self.threadProcesses = threading.Thread(target=self.startThread, args=["getProcesses"])
-            self.threadServices = threading.Thread(target=self.startThread, args=["getServices"])
-            self.threadUserAccounts = threading.Thread(target=self.startThread, args=["getUsers"])
-            self.threadVideoConfiguration = threading.Thread(target=self.startThread, args=["getVideoConfiguration"])
-            self.threadLogicalDisk = threading.Thread(target=self.startThread, args=["getLogicalDisk"])
-            self.threadMappedLogicalDisk = threading.Thread(target=self.startThread, args=["getMappedLogicalDisk"])
-            self.threadPhysicalMemory = threading.Thread(target=self.startThread, args=["getPhysicalMemory"])
-            self.threadPointingDevice = threading.Thread(target=self.startThread, args=["getPointingDevice"])
-            self.threadKeyboard = threading.Thread(target=self.startThread, args=["getKeyboard"])
-            self.threadBaseBoard = threading.Thread(target=self.startThread, args=["getBaseBoard"])
-            self.threadDesktopMonitor = threading.Thread(target=self.startThread, args=["getDesktopMonitor"])
-            self.threadPrinter = threading.Thread(target=self.startThread, args=["getPrinters"])
-            self.threadNetworkLoginProfile = threading.Thread(target=self.startThread, args=["getNetworkLoginProfile"])
-            self.threadNetworkAdapters = threading.Thread(target=self.startThread, args=["getNetworkAdapters"])
-            self.threadPnPEntity = threading.Thread(target=self.startThread, args=["getPnPEntities"])
-            self.threadSoundDevice = threading.Thread(target=self.startThread, args=["getSoundDevices"])
-            self.threadSCSIController = threading.Thread(target=self.startThread, args=["getSCSIController"])
-            self.threadProduct = threading.Thread(target=self.startThread, args=["getProducts"])
-            self.threadProcessor = threading.Thread(target=self.startThread, args=["getProcessor"])
-            self.threadFirewall = threading.Thread(target=self.startThread, args=["getFirewall"])
-            self.threadAgent = threading.Thread(target=self.startThread, args=["getAgent"])
-            self.threadBattery = threading.Thread(target=self.startThread, args=["getBattery"])
-            self.threadFilesystem = threading.Thread(target=self.startThread, args=["getFilesystem"]) 
-            self.threadSharedDrives = threading.Thread(target=self.startThread, args=["getSharedDrives"])
-            self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["getEventLogs", 0, json.loads('{"data":"System"}')])
-            self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", 0, json.loads('{"data":"Application"}')])
-            self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", 0, json.loads('{"data":"Security"}')])
-            self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", 0, json.loads('{"data":"Setup"}')])
-            self.log("Start", "Threads: Finished Configuring")
+            self.log("Start", "Threads: Starting")
+            self.threadHeartbeat = threading.Thread(target=self.startThread, args=["getHeartbeat", True]).start()
+            self.threadAgentLog = threading.Thread(target=self.startThread, args=["getAgentLog", True]).start()
+            self.threadGeneral = threading.Thread(target=self.startThread, args=["getGeneral", True]).start()
+            self.threadBIOS = threading.Thread(target=self.startThread, args=["getBIOS", True]).start()
+            self.threadStartup = threading.Thread(target=self.startThread, args=["getStartup", True]).start()
+            self.threadOptionalFeatures = threading.Thread(target=self.startThread, args=["getOptionalFeatures", True]).start()
+            self.threadProcesses = threading.Thread(target=self.startThread, args=["getProcesses", True]).start()
+            self.threadServices = threading.Thread(target=self.startThread, args=["getServices", True]).start()
+            self.threadUserAccounts = threading.Thread(target=self.startThread, args=["getUsers", True]).start()
+            self.threadVideoConfiguration = threading.Thread(target=self.startThread, args=["getVideoConfiguration", True]).start()
+            self.threadLogicalDisk = threading.Thread(target=self.startThread, args=["getLogicalDisk", True]).start()
+            self.threadMappedLogicalDisk = threading.Thread(target=self.startThread, args=["getMappedLogicalDisk", True]).start()
+            self.threadPhysicalMemory = threading.Thread(target=self.startThread, args=["getPhysicalMemory", True]).start()
+            self.threadPointingDevice = threading.Thread(target=self.startThread, args=["getPointingDevice", True]).start()
+            self.threadKeyboard = threading.Thread(target=self.startThread, args=["getKeyboard", True]).start()
+            self.threadBaseBoard = threading.Thread(target=self.startThread, args=["getBaseBoard", True]).start()
+            self.threadDesktopMonitor = threading.Thread(target=self.startThread, args=["getDesktopMonitor", True]).start()
+            self.threadPrinter = threading.Thread(target=self.startThread, args=["getPrinters", True]).start()
+            self.threadNetworkLoginProfile = threading.Thread(target=self.startThread, args=["getNetworkLoginProfile", True]).start()
+            self.threadNetworkAdapters = threading.Thread(target=self.startThread, args=["getNetworkAdapters", True]).start()
+            self.threadPnPEntity = threading.Thread(target=self.startThread, args=["getPnPEntities", True]).start()
+            self.threadSoundDevice = threading.Thread(target=self.startThread, args=["getSoundDevices", True]).start()
+            self.threadSCSIController = threading.Thread(target=self.startThread, args=["getSCSIController", True]).start()
+            self.threadProduct = threading.Thread(target=self.startThread, args=["getProducts", True]).start()
+            self.threadProcessor = threading.Thread(target=self.startThread, args=["getProcessor", True]).start()
+            self.threadFirewall = threading.Thread(target=self.startThread, args=["getFirewall", True]).start()
+            self.threadAgent = threading.Thread(target=self.startThread, args=["getAgent", True]).start()
+            self.threadBattery = threading.Thread(target=self.startThread, args=["getBattery", True]).start()
+            self.threadFilesystem = threading.Thread(target=self.startThread, args=["getFilesystem", True]).start()
+            self.threadSharedDrives = threading.Thread(target=self.startThread, args=["getSharedDrives", True]).start()
+            self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"System"}')]).start()
+            self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"Application"}')]).start()
+            self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"Security"}')]).start()
+            self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"Setup"}')]).start()
+            self.log("Start", "Threads: Started")
 
-            self.log("Start", "Threads: Starting All")
-            self.threadHeartbeat.start()
-            self.threadAgentLog.start()
-            self.threadGeneral.start()
-            self.threadBIOS.start()
-            self.threadStartup.start()
-            self.threadOptionalFeatures.start()
-            self.threadProcesses.start()
-            self.threadServices.start()
-            self.threadUserAccounts.start()
-            self.threadVideoConfiguration.start()
-            self.threadLogicalDisk.start()
-            self.threadMappedLogicalDisk.start()
-            self.threadPhysicalMemory.start()
-            self.threadPointingDevice.start()
-            self.threadKeyboard.start()
-            self.threadBaseBoard.start()
-            self.threadDesktopMonitor.start()
-            self.threadPrinter.start()
-            self.threadNetworkLoginProfile.start()
-            self.threadNetworkAdapters.start()
-            self.threadPnPEntity.start()
-            self.threadSoundDevice.start()
-            self.threadSCSIController.start()
-            self.threadProduct.start()
-            self.threadProcessor.start()
-            self.threadFirewall.start()
-            self.threadAgent.start()
-            self.threadBattery.start()
-            self.threadFilesystem.start()
-            self.threadSharedDrives.start()
-            self.threadEventLogs_System.start()
-            self.threadEventLogs_Application.start()
-            self.threadEventLogs_Security.start()
-            self.threadEventLogs_Setup.start()
-            self.log("Start", "Threads: Finished Starting") 
-
-            # Send these only on startup, this is technically not threaded and are blocking
-            self.startThread("getScreenshot", True)
-            self.startThread("getRegistry", True)
-            self.startThread("getWindowsActivation", True)
-            #self.startThread("getOklaSpeedtest", True)
-            self.startThread("getAgentLog", True)
-            self.startThread("getAgentSettings", True)   
+            # Send these only once on startup
+            self.threadScreenshot = threading.Thread(target=self.startThread, args=["getScreenshot", False]).start()
+            self.threadRegistry = threading.Thread(target=self.startThread, args=["getRegistry", False]).start()
+            self.threadWindowsActivation = threading.Thread(target=self.startThread, args=["getWindowsActivation", False]).start()
+            #self.threadOklaSpeedtest = threading.Thread(target=self.startThread, args=["getOklaSpeedtest", False]).start()
+            self.threadAgentLog = threading.Thread(target=self.startThread, args=["getAgentLog", False]).start()
+            self.threadAgentSettings = threading.Thread(target=self.startThread, args=["getAgentSettings", False]).start()  
         else:
             self.log("Start", "MQTT is not connected", "Warn")   
 
@@ -336,7 +299,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(DEBUG): print(traceback.format_exc())
 
     # Start Thread
-    def startThread(self, functionName, force=False, payload="{}"):
+    def startThread(self, functionName, loop=False, payload="{}"):
         try:
             self.log("Thread", "Calling Function: " + functionName[3:])
             if(self.MQTT_flag_connected == 1):
@@ -347,12 +310,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(functionName[3:] not in self.Cache): self.Cache[functionName[3:]] = ""
 
                 # Send Data on Startup and on Threads
-                if(force == False and functionName[0:3] == "get" and functionName in self.AgentSettings['Configurable']['Interval']):
+                if(loop == True and functionName[0:3] == "get" and functionName in self.AgentSettings['Configurable']['Interval']):
                     # Get and Send Data on Startup
                     self.log("Thread", functionName[3:] + ": Sending New Data")
                     self.Cache[functionName[3:]] = eval("self." + functionName + "(wmi, payload)")
                     data["Request"] = payload # Pass request payload to response
                     data["Response"] = self.Cache[functionName[3:]]
+                    
                     encMessage = self.Fernet.encrypt(json.dumps(data).encode())
                     self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
                     
@@ -365,10 +329,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                             # Get and send Data
                             New = eval("self." + functionName + "(wmi, payload)")
                             if(New != self.Cache[functionName[3:]]): # Only send data if diffrent.
-                                self.log("Thread", functionName[3:] + ": Sending New Data")
+                                self.log("Thread Loop", functionName[3:] + ": Sending New Data")
                                 self.Cache[functionName[3:]] = New # Set Cache
                                 data["Request"] = ""
                                 data["Response"] = New
+                                encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+                                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
   
                 else: # This section is ran when asked to get data via a command
                     # Process Payload
@@ -385,14 +351,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     else: # Rate Limit Reached!
                         self.log("Thread", functionName[3:] + ": RATE LIMIT, Sending Cache")
                     
-                if(functionName[3:] == "Screenshot"): # For Screenshot
-                    encMessage = self.Fernet.encrypt(self.Cache[functionName[3:]])
-                    self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
-                else:
-                    data["Request"] = payload # Pass request payload to response
-                    data["Response"] = self.Cache[functionName[3:]]
-                    encMessage = self.Fernet.encrypt(json.dumps(data).encode())
-                    self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
+                    if(functionName[3:] == "Screenshot"): # For Screenshot
+                        encMessage = self.Fernet.encrypt(self.Cache[functionName[3:]])
+                        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
+                    else:
+                        data["Request"] = payload # Pass request payload to response
+                        data["Response"] = self.Cache[functionName[3:]]
+                        encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+                        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("Thread - " + functionName, e, "Error")
@@ -472,7 +438,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Heartbeat
     def getHeartbeat(self, wmi, payload=None):
-        return ""
+        return time.time()
 
     # Agent Log
     def getAgentLog(self, wmi, payload=None):
@@ -1329,12 +1295,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # Run Code in CMD, Add Cache
     def CMD(self, payload):
         try:
-            
             payload = json.loads(payload)
             if("data" in payload):
                 command = payload["data"]
                 self.log("CMD", "Running Command: " + command)
-                return subprocess.check_output(command, shell=True)           
+                data = str(subprocess.check_output(command, shell=True), "utf-8")
+                return {"Request": payload, "Response": data} 
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("CMD", e, "Error")
