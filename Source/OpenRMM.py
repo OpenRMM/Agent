@@ -27,16 +27,16 @@ import rsa
 from cryptography.fernet import Fernet
 
 ################################# SETUP ##################################
-MQTT_Server = "***"
-MQTT_Username = "*****"
-MQTT_Password = "*******"
+MQTT_Server = "*************"
+MQTT_Username = "***********"
+MQTT_Password = "****************"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "The OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.9.3"
+Agent_Version = "1.9.4"
 
 LOG_File = "C:\OpenRMM.log"
 DEBUG = False
@@ -178,13 +178,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
         # Make sure we have the base settings, ID, Salt then start listining to commands
         if( "Setup" in self.AgentSettings):
-            if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/CMD"): self.CMD(message.payload)
-
             try:
-                # Process commands
+                # Process Commands
                 command = message.topic.split("/")
                 if(command[1] == "Commands"):
-                    if(command[2][0:3] == "get" or command[2][0:3] == "set"): threading.Thread(target=self.startThread, args=[command[2], True, message.payload.decode('utf-8')]).start()
+                    # Command Prompt
+                    if(command[2] == "CMD"):
+                        encMessage = self.Fernet.encrypt(self.CMD(message.payload))
+                        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/CMD", encMessage, qos=1)
+                    # Other Commands
+                    elif(command[2][0:3] == "get" or command[2][0:3] == "set"): 
+                        threading.Thread(target=self.startThread, args=[command[2], True, message.payload.decode('utf-8')]).start()
                 self.command = {}
             except Exception as e:
                 self.log("Commands", e, "Error")
@@ -212,7 +216,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         if(setType == "Startup"):
             self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Set", RSAEncryptedSalt, qos=1, retain=False)
         elif(setType == "Sync"):
-            print("################## SENDING SYNC ########################")
             self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Sync", RSAEncryptedSalt, qos=1, retain=False)
 
     def Go(self):
@@ -1326,11 +1329,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # Run Code in CMD, Add Cache
     def CMD(self, payload):
         try:
+            
             payload = json.loads(payload)
             if("data" in payload):
                 command = payload["data"]
-                returnData = subprocess.check_output(command, shell=True)
-                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/CMD", returnData, qos=1)
+                self.log("CMD", "Running Command: " + command)
+                return subprocess.check_output(command, shell=True)           
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("CMD", e, "Error")
