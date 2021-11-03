@@ -19,24 +19,24 @@ import pkg_resources
 import urllib.request
 import scandir
 from random import randint
-import speedtest
 import traceback
 import socket
 import datetime
 import rsa
 from cryptography.fernet import Fernet
+#import speedtest
 
 ################################# SETUP ##################################
-MQTT_Server = "****"
+MQTT_Server = "***"
 MQTT_Username = "****"
-MQTT_Password = "***"
+MQTT_Password = "******"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
-Service_Display_Name = "The OpenRMM Agent"
+Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.9.5"
+Agent_Version = "1.9.6"
 
 LOG_File = "C:\OpenRMM.log"
 DEBUG = False
@@ -128,8 +128,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
 
-    def stop(self):
+    def SvcStop(self):
         self.isrunning = False
+        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+        win32event.SetEvent(self.hWaitStop)  
 
     def main(self):
         while self.isrunning: time.sleep(0.1)
@@ -169,9 +171,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             f.close()
             self.getSet()
 
+        # Server has everything it needs for us to start
         if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Go"):
             self.Go()
 
+        # Sync message recieved from server, update keys
         if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Sync"):
             self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
             self.getSet("Sync")
@@ -557,6 +561,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subGeneral["NumberOfProcessors"] = s.HypervisorPresent
                 subGeneral["Workgroup"] = s.Workgroup
                 subGeneral["UserName"] = s.UserName
+
             data[0] = subGeneral
             return data
         except Exception as e:
@@ -1078,7 +1083,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProcessor["SerialNumber"] = s.SerialNumber
                 subProcessor["ThreadCount"] = s.ThreadCount
                 subProcessor["Version"] = s.Version
-                subProcessor["LoadPercentage"] = s.LoadPercentage   
+                subProcessor["LoadPercentage"] = s.LoadPercentage
                 data[count] = subProcessor
             return data
         except Exception as e:
