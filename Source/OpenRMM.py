@@ -27,9 +27,9 @@ from cryptography.fernet import Fernet
 #import speedtest
 
 ################################# SETUP ##################################
-MQTT_Server = "***"
+MQTT_Server = "****"
 MQTT_Username = "****"
-MQTT_Password = "******"
+MQTT_Password = "*****"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
@@ -271,10 +271,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"Application"}')]).start()
             self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"Security"}')]).start()
             self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"Setup"}')]).start()
+            self.threadScreenshot = threading.Thread(target=self.startThread, args=["getScreenshot", True]).start()
             self.log("Start", "Threads: Started")
 
             # Send these only once on startup
-            self.threadScreenshot = threading.Thread(target=self.startThread, args=["getScreenshot", False]).start()
             self.threadRegistry = threading.Thread(target=self.startThread, args=["getRegistry", False]).start()
             self.threadWindowsActivation = threading.Thread(target=self.startThread, args=["getWindowsActivation", False]).start()
             #self.threadOklaSpeedtest = threading.Thread(target=self.startThread, args=["getOklaSpeedtest", False]).start()
@@ -318,12 +318,16 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     # Get and Send Data on Startup
                     self.log("Thread", functionName[3:] + ": Sending New Data")
                     self.Cache[functionName[3:]] = eval("self." + functionName + "(wmi, payload)")
-                    data["Request"] = payload # Pass request payload to response
-                    data["Response"] = self.Cache[functionName[3:]]
-                    
-                    encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+
+                    if(functionName[3:] == "Screenshot"): # For Screenshot
+                        encMessage = self.Fernet.encrypt(self.Cache[functionName[3:]])   
+                    else:
+                        data["Request"] = payload # Pass request payload to response
+                        data["Response"] = self.Cache[functionName[3:]]
+                        encMessage = self.Fernet.encrypt(json.dumps(data).encode())
                     self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
-                    
+                        
+                        
                     # Loop for periodic updates
                     while True:
                         time.sleep(1)
@@ -403,6 +407,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         Interval["getSharedDrives"] = 30
         Interval["getEventLogs"] = 60
         Interval["getWindowsUpdates"] = 1440
+        Interval["getScreenshot"] = 60
         self.AgentSettings['Configurable'] = {'Interval': Interval}
     
     # Set Agent Settings, 315/Commands/setAgentSettings, {"Interval": {"getFilesystem": 30, "getBattery": 30}}
