@@ -39,7 +39,7 @@ py -m pip install rsa
 py -m pip install cryptography
 echo Moving DLLs
 echo moving C:\Python\Lib\site-packages\pywin32_system32
-Xcopy /E /I /Y C:\Python\Lib\site-packages\pywin32_system32 C:\Python\Lib\site-packages\win32\lib\pywin32_system32
+Xcopy /E /I /Y C:\Python\Lib\site-packages\pywin32_system32 C:\Python\Lib\site-packages\win32
 
 echo Installing OpenRMM Agent
 py OpenRMM.py --startup auto --interactive install
