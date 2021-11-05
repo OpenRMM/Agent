@@ -27,16 +27,16 @@ from cryptography.fernet import Fernet
 #import speedtest
 
 ################################# SETUP ##################################
-MQTT_Server = "****"
-MQTT_Username = "****"
-MQTT_Password = "*****"
+MQTT_Server = "*****"
+MQTT_Username = "*****"
+MQTT_Password = "******"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.9.6"
+Agent_Version = "1.9.7"
 
 LOG_File = "C:\OpenRMM.log"
 DEBUG = False
@@ -86,7 +86,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.AgentLog = []
             self.isrunning = True
             self.log("Setup", "Agent Starting")
-            self.hostname = os.environ['COMPUTERNAME']
+            self.session_id = str(randint(1000000000000000, 1000000000000000000))
             self.AgentSettings = {}
             self.MQTT_flag_connected = 0
             self.rateLimit = 120
@@ -107,12 +107,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
             try:
                 self.log("Setup", "Starting MQTT")
-                client_id = self.hostname + str(randint(1000, 10000))
-                self.mqtt = mqtt.Client(client_id=client_id, clean_session=True)
+                self.mqtt = mqtt.Client(client_id=self.session_id, clean_session=True)
                 self.mqtt.username_pw_set(MQTT_Username, MQTT_Password)
-                self.mqtt.will_set(self.hostname + "/Status", "Offline", qos=1, retain=True)
+                self.mqtt.will_set(self.session_id + "/Status", "0", qos=1, retain=True)
                 self.mqtt.connect(MQTT_Server, port=MQTT_Port)
-                self.mqtt.subscribe(self.hostname + "/Commands/#", qos=1)
+                self.mqtt.subscribe(self.session_id + "/Commands/#", qos=1)
                 self.mqtt.on_message = self.on_message
                 self.mqtt.on_connect = self.on_connect
                 self.mqtt.on_disconnect = self.on_disconnect
@@ -142,7 +141,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.log("MQTT", "Connected to server: " + MQTT_Server + " with result code " + str(rc))
         if(exists("C:\OpenRMM.json") == False):
             self.log("MQTT", "Sending New Agent command to server")
-            self.mqtt.publish(self.hostname + "/Agent/New", "true", qos=1, retain=False)
+            self.mqtt.publish(self.session_id + "/Agent/New", "true", qos=1, retain=False)
         else:
             if("Setup" in self.AgentSettings):
                 self.getReady()
@@ -155,7 +154,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         print("MQTT: Received message '" + str(message.payload) + "' on topic '" + message.topic + "' with QoS " + str(message.qos))
 
         # Ready is sent on agent start, first step in connection is public key exchange
-        if (str(message.topic) == self.hostname + "/Commands/New"):
+        if (str(message.topic) == self.session_id + "/Commands/New"):
             self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
             self.log("MQTT", "Got ID From server, Setting Up Agent with ID: " + str(self.AgentSettings["Setup"]["ID"]))
             if("Setup" in self.AgentSettings):
@@ -199,11 +198,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     def getReady(self):
         # Prep MQTT
-        self.mqtt.unsubscribe(self.hostname + "/Commands/#")
+        self.mqtt.unsubscribe(self.session_id + "/Commands/#")
         self.mqtt.subscribe(str(self.AgentSettings["Setup"]["ID"]) + "/Commands/#", qos=1)
 
         # Send ready to server
-        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Ready", "true", qos=1, retain=False)
+        payload = {"Session_ID":self.session_id}
+        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Ready", json.dumps(payload), qos=1, retain=False)
 
     def getSet(self, setType="Startup"):
         self.Public_Key = rsa.PublicKey.load_pkcs1(self.AgentSettings["Setup"]["Public_Key"].encode('utf8'))
@@ -213,16 +213,19 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.Fernet = Fernet(self.AgentSettings["Setup"]["salt"])
         print("Salt is: " + self.AgentSettings["Setup"]["salt"])
 
-        # Send RSA encrypted key to the server
+        # Send RSA encrypted key & session_id to the server
         self.log("Encryption", "Sending salt to server")
         RSAEncryptedSalt = rsa.encrypt(self.AgentSettings["Setup"]["salt"].encode(), self.Public_Key)
-
+        
         if(setType == "Startup"):
             self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Set", RSAEncryptedSalt, qos=1, retain=False)
         elif(setType == "Sync"):
             self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Sync", RSAEncryptedSalt, qos=1, retain=False)
 
     def Go(self):
+        # Changing status to Online
+        self.mqtt.publish(self.session_id + "/Status", "1", qos=1, retain=True)
+
         self.log("Start", "Recieved Go command from server. Agent Version: " + Agent_Version)
 
         # Check if got agent settings here, if not load defaults
@@ -265,12 +268,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadFirewall = threading.Thread(target=self.startThread, args=["getFirewall", True]).start()
             self.threadAgent = threading.Thread(target=self.startThread, args=["getAgent", True]).start()
             self.threadBattery = threading.Thread(target=self.startThread, args=["getBattery", True]).start()
-            self.threadFilesystem = threading.Thread(target=self.startThread, args=["getFilesystem", True]).start()
+            self.threadFilesystem = threading.Thread(target=self.startThread, args=["getFilesystem", True, {"data":"C:\\"}]).start()
             self.threadSharedDrives = threading.Thread(target=self.startThread, args=["getSharedDrives", True]).start()
-            self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"System"}')]).start()
-            self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"Application"}')]).start()
-            self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"Security"}')]).start()
-            self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLogs", True, json.loads('{"data":"Setup"}')]).start()
+            self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["getEventLog_System", True]).start()
+            self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["getEventLog_Application", True]).start()
+            self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLog_Security", True]).start()
+            self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLog_Setup", True]).start()
             self.threadScreenshot = threading.Thread(target=self.startThread, args=["getScreenshot", True]).start()
             self.log("Start", "Threads: Started")
 
@@ -325,6 +328,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         data["Request"] = payload # Pass request payload to response
                         data["Response"] = self.Cache[functionName[3:]]
                         encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+                    # Send all data on inital send
                     self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
                         
                         
@@ -341,6 +345,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                                 self.Cache[functionName[3:]] = New # Set Cache
                                 data["Request"] = ""
                                 data["Response"] = New
+
+                                # Send Diffreential
                                 encMessage = self.Fernet.encrypt(json.dumps(data).encode())
                                 self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
   
@@ -366,6 +372,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         data["Request"] = payload # Pass request payload to response
                         data["Response"] = self.Cache[functionName[3:]]
                         encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+
                         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:], encMessage, qos=1)
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -522,8 +529,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             subGeneral = {}
 
             # Get Public IP Info
-            IPInfo = urllib.request.urlopen('http://ipinfo.io/json').read().decode('utf8')
-            subGeneral["ExternalIP"] = json.loads(IPInfo)
+            #IPInfo = urllib.request.urlopen('http://ipinfo.io/json').read().decode('utf8')
+            #subGeneral["ExternalIP"] = json.loads(IPInfo)
 
             # Get Local IP Info
             st = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -562,8 +569,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subGeneral["Totalphysicalmemory"] = s.totalphysicalmemory
                 subGeneral["Domain"] = s.Domain
                 subGeneral["HypervisorPresent"] = s.HypervisorPresent
-                subGeneral["NumberOfLogicalProcessors"] = s.HypervisorPresent
-                subGeneral["NumberOfProcessors"] = s.HypervisorPresent
+                subGeneral["NumberOfLogicalProcessors"] = s.NumberOfLogicalProcessors
+                subGeneral["NumberOfProcessors"] = s.NumberOfProcessors
                 subGeneral["Workgroup"] = s.Workgroup
                 subGeneral["UserName"] = s.UserName
 
@@ -620,7 +627,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             wmi = wmi.WMI()
             count = -1
             data = {}
-            for s in wmi.Win32_StartupCommand(["Caption", "Location", "Command"]):
+            for s in wmi.Win32_StartupCommand(["Caption", "Command", "Location"]):
                 count = count +1
                 subStartup = {}
                 subStartup["Location"] = s.Location
@@ -687,9 +694,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subUserAccounts["AccountType"] = s.AccountType
                 subUserAccounts["Disabled"] = s.Disabled
                 subUserAccounts["Domain"] = s.Domain
-                subUserAccounts["FullName"] = s.Name
-                subUserAccounts["LocalAccount"] = s.Name
-                subUserAccounts["PasswordChangeable"] = s.Name
+                subUserAccounts["FullName"] = s.FullName
+                subUserAccounts["LocalAccount"] = s.LocalAccount
+                subUserAccounts["PasswordChangeable"] = s.PasswordChangeable
                 subUserAccounts["PasswordExpires"] = s.PasswordExpires
                 subUserAccounts["PasswordRequired"] = s.PasswordRequired
                 subUserAccounts["Caption"] = s.Caption
@@ -965,8 +972,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkAdapter["DNSDomain"] = s.DNSDomain
                 subNetworkAdapter["Index"] = s.Index
                 subNetworkAdapter["MACAddress"] = s.MACAddress
-                subNetworkAdapterIP = {}
-                subNetworkAdapter["IPAddress"] = subNetworkAdapterIP
                 data[count] = subNetworkAdapter
             # Only publish if changed
             return data
@@ -1100,10 +1105,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         try:
             data = {}
             subFirewall = {}
-            subFirewall['currentProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show currentprofile state', shell=True).decode("utf-8") else 'OFF'
-            subFirewall['publicProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show publicProfile state', shell=True).decode("utf-8") else 'OFF'
-            subFirewall['privateProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show privateProfile state', shell=True).decode("utf-8") else 'OFF'
-            subFirewall['domainProfile'] = 'ON' if "ON" not in subprocess.check_output('netsh advfirewall show domainProfile state', shell=True).decode("utf-8") else 'OFF'
+            subFirewall['currentProfile'] = 'ON' if "ON" in subprocess.check_output('netsh advfirewall show currentprofile state', shell=True).decode("utf-8") else 'OFF'
+            subFirewall['publicProfile'] = 'ON' if "ON" in subprocess.check_output('netsh advfirewall show publicProfile state', shell=True).decode("utf-8") else 'OFF'
+            subFirewall['privateProfile'] = 'ON' if "ON" in subprocess.check_output('netsh advfirewall show privateProfile state', shell=True).decode("utf-8") else 'OFF'
+            subFirewall['domainProfile'] = 'ON' if "ON" in subprocess.check_output('netsh advfirewall show domainProfile state', shell=True).decode("utf-8") else 'OFF'
             data[0] = subFirewall
             return data  
         except Exception as e:
@@ -1236,6 +1241,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("SharedDrives", e, "Error")
 
     # Get Event Logs
+    def getEventLog_Application(self, wmi, payload=None): return self.getEventLogs(wmi, {"data":"Application"})
+    def getEventLog_Security(self, wmi, payload=None): return self.getEventLogs(wmi, {"data":"Security"})
+    def getEventLog_System(self, wmi, payload=None): return self.getEventLogs(wmi, {"data":"System"})
+    def getEventLog_Setup(self, wmi, payload=None): return self.getEventLogs(wmi, {"data":"Setup"})
+
     def getEventLogs(self, wmi, payload=None):
         try:
             if("data" in payload):

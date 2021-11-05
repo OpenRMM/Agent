@@ -27,7 +27,7 @@ if '%errorlevel%' NEQ '0' (
 CD Source
 echo Installing Python 3.9.7
 python-3.9.7.exe /quiet InstallAllUsers=1 PrependPath=1 TargetDir=C:\Python\ DefaultAllUsersTargetDir=C:\Python\ Include_test=0
-echo "Installing Required Modules"
+echo Installing Required Modules
 py -m pip install paho-mqtt
 py -m pip install pyautogui
 py -m pip install pywin32
