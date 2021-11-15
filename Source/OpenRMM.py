@@ -30,14 +30,14 @@ import speedtest
 ################################# SETUP ##################################
 MQTT_Server = "***"
 MQTT_Username = "****"
-MQTT_Password = "****"
+MQTT_Password = "*****"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "1.9.8"
+Agent_Version = "1.9.9"
 
 LOG_File = "C:\OpenRMM.log"
 DEBUG = False
@@ -61,10 +61,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     _svc_name_ = Service_Name
     _svc_display_name_ = Service_Display_Name
     _svc_description_ = Service_Description
-
-    def str_diff_parse(self, str_diff):
-        return [tuple(literal_eval(y) for y in re.findall(r"\[('?\w+'?)\]", x)) for x in str_diff]
-
 
     def __init__(self, args):
         win32serviceutil.ServiceFramework.__init__(self, args)
@@ -280,14 +276,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["getEventLog_Security", True]).start()
             self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["getEventLog_Setup", True]).start()
             self.threadScreenshot = threading.Thread(target=self.startThread, args=["getScreenshot", True]).start()
+            
+            # Send these only once on startup, unless an interval is defined by the front end
+            self.threadRegistry = threading.Thread(target=self.startThread, args=["getRegistry", True]).start()
+            self.threadWindowsActivation = threading.Thread(target=self.startThread, args=["getWindowsActivation", True]).start()
+            self.threadAgentLog = threading.Thread(target=self.startThread, args=["getAgentLog", True]).start()
+            self.threadAgentSettings = threading.Thread(target=self.startThread, args=["getAgentSettings", True]).start()
+            # self.threadOklaSpeedtest = threading.Thread(target=self.startThread, args=["getOklaSpeedtest", True]).start()
             self.log("Start", "Threads: Started")
-
-            # Send these only once on startup
-            #self.threadRegistry = threading.Thread(target=self.startThread, args=["getRegistry", False]).start()
-            #self.threadWindowsActivation = threading.Thread(target=self.startThread, args=["getWindowsActivation", False]).start()
-            #self.threadOklaSpeedtest = threading.Thread(target=self.startThread, args=["getOklaSpeedtest", False]).start()
-            #self.threadAgentLog = threading.Thread(target=self.startThread, args=["getAgentLog", False]).start()
-            #self.threadAgentSettings = threading.Thread(target=self.startThread, args=["getAgentSettings", False]).start()  
         else:
             self.log("Start", "MQTT is not connected", "Warn")   
 
@@ -322,7 +318,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(functionName[3:] not in self.Cache): self.Cache[functionName[3:]] = ""
 
                 # Send Data on Startup and on Threads
-                if(loop == True and functionName[0:3] == "get" and functionName in self.AgentSettings['Configurable']['Interval']):
+                if(loop == True and functionName[0:3] == "get"):
                     # Get and Send Data on Startup
                     self.log("Thread", functionName[3:] + ": Sending New Data")
                     self.Cache[functionName[3:]] = eval("self." + functionName + "(wmi, payload)")
@@ -335,10 +331,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         encMessage = self.Fernet.encrypt(json.dumps(data).encode())
                     # Send all data on inital send
                     self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[3:] + "/Initial", encMessage, qos=1)
-                        
-                        
+                                  
                     # Loop for periodic updates
-                    while True:
+                    while functionName in self.AgentSettings['Configurable']['Interval']:
                         time.sleep(1)
                         loopCount = loopCount + 1
                         if (loopCount == (60 * self.AgentSettings['Configurable']['Interval'][functionName])): # Every x minutes
@@ -382,7 +377,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     else: # Rate Limit Reached!
                         self.log("Thread", functionName[3:] + ": RATE LIMIT, Sending Cache")
                     
-
         except Exception as e:
             exception_type, exception_object, exception_traceback = sys.exc_info()
             line_number = exception_traceback.tb_lineno
@@ -510,7 +504,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subWindowsUpdates["InstalledBy"] = s.InstalledBy
                 subWindowsUpdates["InstalledOn"] = s.InstalledOn
                 subWindowsUpdates["Status"] = s.Status
-                data[str(count)] = subWindowsUpdates
+                data[s.Caption] = subWindowsUpdates
                 return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -532,7 +526,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             licenseStatus["PartialProductKey"] = returnData[3].split(": ")[1]
             licenseStatus["LicenseStatus"] = returnData[4].split(": ")[1]
             licenseStatus["NotificationReason"] = returnData[5].split(": ")[1]
-            data[0] = licenseStatus
+            data["0"] = licenseStatus
             return data
         except Exception as e:
             print(traceback.format_exc())
@@ -611,7 +605,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subService["State"] = s.State
                 subService["StartMode"] = s.StartMode
                 subService["Caption"] = s.Caption
-                data[str(count)] = subService
+                data[s.Caption] = subService
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -631,7 +625,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBIOS["SerialNumber"] = s.SerialNumber
                 subBIOS["Version"] = s.Version
                 subBIOS["Status"] = s.Status
-                data[0] = subBIOS
+                data["0"] = subBIOS
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -649,7 +643,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subStartup["Location"] = s.Location
                 subStartup["Command"] = s.Command
                 subStartup["Caption"] = s.Caption     
-                data[str(count)] = subStartup
+                data[s.Caption] = subStartup
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -670,7 +664,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subOptionalFeatures["Name"] = s.Name
                 subOptionalFeatures["Caption"] = s.Caption
                 subOptionalFeatures["InstallState"] = s.InstallState
-                data[str(count)] = subOptionalFeatures
+                data[s.Caption] = subOptionalFeatures
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -717,7 +711,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subUserAccounts["PasswordRequired"] = s.PasswordRequired
                 subUserAccounts["Caption"] = s.Caption
                 subUserAccounts["Name"] = s.Name 
-                data[str(count)] = subUserAccounts
+                data[s.Caption] = subUserAccounts
             return data         
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -743,7 +737,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subVideoConfiguration["ScreenWidth"] = s.ScreenWidth
                 subVideoConfiguration["VerticalResolution"] = s.VerticalResolution
                 subVideoConfiguration["Caption"] = s.Caption
-                data[str(count)] = subVideoConfiguration
+                data[s.Caption] = subVideoConfiguration
             return data            
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -771,7 +765,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subLogicalDisk["Size"] = s.Size
                 subLogicalDisk["VolumeSerialNumber"] = s.VolumeSerialNumber
                 subLogicalDisk["Caption"] = s.Caption 
-                data[str(count)] = subLogicalDisk
+                data[s.Caption] = subLogicalDisk
             return data 
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -799,7 +793,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subMappedLogicalDisk["VolumeName"] = s.VolumeName
                 subMappedLogicalDisk["VolumeSerialNumber"] = s.VolumeSerialNumber
                 subMappedLogicalDisk["Caption"] = s.Caption
-                data[str(count)] = subMappedLogicalDisk
+                data[s.Caption] = subMappedLogicalDisk
             return data 
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -828,7 +822,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPhysicalMemory["PositionInRow"] = s.PositionInRow
                 subPhysicalMemory["Speed"] = s.Speed
                 subPhysicalMemory["Status"] = s.Status
-                data[str(count)] = subPhysicalMemory
+                data[s.Name] = subPhysicalMemory
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -849,7 +843,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPointingDevice["Manufacturer"] = s.Manufacturer
                 subPointingDevice["Name"] = s.Name
                 subPointingDevice["Status"] = s.Status
-                data[str(count)] = subPointingDevice
+                data[s.Caption] = subPointingDevice
             return data 
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -869,7 +863,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subKeyboard["DeviceID"] = s.DeviceID
                 subKeyboard["Name"] = s.Name
                 subKeyboard["Status"] = s.Status
-                data[str(count)] = subKeyboard
+                data[s.Caption] = subKeyboard
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -894,7 +888,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBaseBoard["Status"] = s.Status
                 subBaseBoard["Tag"] = s.Tag
                 subBaseBoard["Version"] = s.Version
-                data[str(count)] = subBaseBoard
+                data[s.Caption] = subBaseBoard
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -918,7 +912,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subDesktopMonitor["Status"] = s.Status
                 subDesktopMonitor["ScreenHeight"] = s.ScreenHeight
                 subDesktopMonitor["ScreenWidth"] = s.ScreenWidth
-                data[str(count)] = subDesktopMonitor
+                data[s.Caption] = subDesktopMonitor
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -943,7 +937,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPrinter["Network"] = s.Network
                 subPrinter["PortName"] = s.PortName
                 subPrinter["Shared"] = s.Shared
-                data[str(count)] = subPrinter
+                data[s.Caption] = subPrinter
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -964,7 +958,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkLoginProfile["HomeDirectory"] = s.HomeDirectory
                 subNetworkLoginProfile["Name"] = s.Name
                 subNetworkLoginProfile["NumberOfLogons"] = s.NumberOfLogons
-                data[str(count)] = subNetworkLoginProfile
+                data[s.Caption] = subNetworkLoginProfile
             return data    
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -988,7 +982,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subNetworkAdapter["DNSDomain"] = s.DNSDomain
                 subNetworkAdapter["Index"] = s.Index
                 subNetworkAdapter["MACAddress"] = s.MACAddress
-                data[str(count)] = subNetworkAdapter
+                data[s.Caption] = subNetworkAdapter
             # Only publish if changed
             return data
         except Exception as e:
@@ -1014,7 +1008,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subPnPEntity["Present"] = s.Present
                 subPnPEntity["Service"] = s.Service
                 subPnPEntity["Status"] = s.Status
-                data[str(count)] = subPnPEntity
+                data[s.Caption] = subPnPEntity
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -1036,7 +1030,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subSoundDevice["Name"] = s.Name
                 subSoundDevice["ProductName"] = s.ProductName
                 subSoundDevice["Status"] = s.Status
-                data[str(count)] = subSoundDevice
+                data[s.Caption] = subSoundDevice
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -1057,7 +1051,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subSCSIController["Manufacturer"] = s.Manufacturer
                 subSCSIController["Name"] = s.Name
                 subSCSIController["DriverName"] = s.DriverName
-                data[str(count)] = subSCSIController
+                data[s.Caption] = subSCSIController
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -1080,7 +1074,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProduct["Name"] = s.Name
                 subProduct["Vendor"] = s.Vendor
                 subProduct["Version"] = s.Version      
-                data[str(count)] = subProduct
+                data[s.Caption] = subProduct
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -1110,7 +1104,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subProcessor["ThreadCount"] = s.ThreadCount
                 subProcessor["Version"] = s.Version
                 subProcessor["LoadPercentage"] = s.LoadPercentage
-                data[str(count)] = subProcessor
+                data[s.Caption] = subProcessor
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -1170,7 +1164,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subBattery["TimeOnBattery"] = str(s.TimeOnBattery)
                 subBattery["TimeToFullCharge"] = str(s.TimeToFullCharge)
                 subBattery["BatteryStatus"] = s.BatteryStatus
-                data[str(count)] = subBattery
+                data[s.Caption] = subBattery
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -1229,11 +1223,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def getRegistry(self, wmi, payload=None):
         subRegistry = {}
         try:
-            if("data" in payload):
-                r = wmi.Registry()
-                result, names = r.EnumKey(hDefKey=win32con.HKEY_LOCAL_MACHINE)
-                for key in names:
-                    print(key)
+            return subRegistry
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("Registry", e, "Error")
@@ -1250,7 +1240,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subSharedDrives = {}
                 subSharedDrives["Name"] = s.Name
                 subSharedDrives["Path"] = s.Path
-                data[str(count)] = subSharedDrives
+                data[s.Name] = subSharedDrives
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
