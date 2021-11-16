@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 
-#TOdO
-# Clean agent log
-
 import os
 from os.path import exists
 import wmi
@@ -32,15 +29,15 @@ import speedtest
 
 ################################# SETUP ##################################
 MQTT_Server = "*****"
-MQTT_Username = "*****"
-MQTT_Password = "***"
+MQTT_Username = "****"
+MQTT_Password = "******"
 MQTT_Port = 1884
 
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.0.0"
+Agent_Version = "dev-2.0.1"
 
 LOG_File = "C:\OpenRMM.log"
 DEBUG = False
@@ -91,7 +88,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.Cache = {}
             self.lastRan = {}
             self.AgentLog = []
-            self.ignoreRateLimit = ["getFilesystem", "getEventLogs"]
+            self.ignoreRateLimit = ["get_filesystem", "get_event_logs"]
             self.isrunning = True
             self.session_id = str(randint(1000000000000000, 1000000000000000000))
             self.MQTT_flag_connected = 0
@@ -191,7 +188,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/CMD", encMessage, qos=1)
                     # Other Commands
                     elif(command[2][0:4] == "get_" or command[2][0:4] == "set_"): 
-                        threading.Thread(target=self.startThread, args=[ command[2][4:], False, message.payload.decode('utf-8')]).start()
+                        threading.Thread(target=self.startThread, args=[command[2], False, message.payload.decode('utf-8')]).start()
                 self.command = {}
             except Exception as e:
                 self.log("Commands", e, "Error")
@@ -321,15 +318,15 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(loop == True and functionName[0:4] == "get_"):
                     self.log("Thread", functionName[4:] + ": Sending New Data")
                     New = eval("self." + functionName + "(wmi, payload)")
-                    result = diff({}, New)
                     
                     if(functionName[4:] == "screenshot"):
                         encMessage = self.Fernet.encrypt(New)
                     else:
+                        result = diff({}, New)
                         data["Request"] = payload # Pass request payload to response
                         data["Response"] = list(result)
                         encMessage = self.Fernet.encrypt(json.dumps(data).encode())
-                        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
+                    self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
                 
                     # Loop for periodic updates
                     while functionName[4:] in self.AgentSettings['Configurable']['Interval']:
@@ -340,18 +337,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                             # Get and send Data
                             New = eval("self." + functionName + "(wmi, payload)")
                             if(New != self.Cache[functionName[4:]]): # Only send data if diffrent.
-                                result = diff(self.Cache[functionName[4:]], New)
-
                                 self.log("Thread Loop", functionName[4:] + ": Sending New Data")
-                                self.Cache[functionName[4:]] = New
                                 
                                 if(functionName[4:] == "screenshot"):
                                     encMessage = self.Fernet.encrypt(New)
+                                    self.Cache[functionName[4:]] = New
                                 else:
+                                    result = diff(self.Cache[functionName[4:]], New)
+                                    self.Cache[functionName[4:]] = New
                                     data["Request"] = ""
                                     data["Response"] = list(result)
                                     encMessage = self.Fernet.encrypt(json.dumps(data).encode())
-
                                 self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
   
                 else: # This section is ran when asked to get data via a command
@@ -365,19 +361,20 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     if(time.time() - self.lastRan[functionName] >= self.rateLimit or functionName in self.ignoreRateLimit):
                         self.lastRan[functionName] = time.time()
                         New = eval("self." + functionName + "(wmi, payload)")
-                        self.log("Thread", functionName[4:] + ": Sending New Data")
-                        result = diff(self.Cache[functionName[4:]], New)
-                        self.Cache[functionName[4:]] = New
+                        self.log("Thread", functionName[4:] + ": Sending New Data")                    
 
                         if(functionName[4:] == "screenshot"):
                             encMessage = self.Fernet.encrypt(New)
+                            self.Cache[functionName[4:]] = New
                         else:
+                            result = diff(self.Cache[functionName[4:]], New)
+                            self.Cache[functionName[4:]] = New
                             data["Request"] = payload # Pass request payload to response
                             data["Response"] = list(result)
                             encMessage = self.Fernet.encrypt(json.dumps(data).encode())
                         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
                     else: # Rate Limit Reached!
-                        self.log("Thread", functionName[4:] + ": RATE LIMIT, Sending Cache")
+                        self.log("Thread", functionName[4:] + ": RATE LIMIT")
                     
         except Exception as e:
             exception_type, exception_object, exception_traceback = sys.exc_info()
