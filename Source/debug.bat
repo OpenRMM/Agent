@@ -24,5 +24,4 @@ if '%errorlevel%' NEQ '0' (
     CD /D "%~dp0"
 ::--------------------------------------
 
-cd C:\OpenRMM\Agent
 py OpenRMM.py debug

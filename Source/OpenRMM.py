@@ -32,7 +32,7 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "dev-2.0.5"
+Agent_Version = "dev-2.0.6"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
@@ -418,6 +418,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         Interval["event_log_system"] = 60
         Interval["event_log_setup"] = 60
         Interval["event_log_security"] = 60
+        Interval["serial_ports"] = 60
         
         self.AgentSettings['Configurable'] = {'Interval': Interval}
 
@@ -427,7 +428,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if("update_url" in payload["data"]):
                 updateURL = payload['data']['update_url']
                 self.log("Update Agent", "Update Requested")  
-                proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat", shell=True)
+                proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat " + updateURL, shell=True)
                 time.sleep(2)
                 self.SvcStop()
             else:
@@ -485,14 +486,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             d1 = datetime.datetime.strptime(str(datetime.datetime.now()), "%Y-%m-%d %H:%M:%S.%f")
             for log in self.AgentLog:
                 d2 = datetime.datetime.strptime(log["Time"], "%Y-%m-%d %H:%M:%S.%f")
-                if(( d1 - d2).days > logRetention):
+                if((d1 - d2).days > logRetention):
                     count = count +1
                 else:
                     logs.append(log)
             if(count > 0):
                 print("Removed " + str(count) + " log entrys, they were " + str((d1 - d2).days) + " days old.")
             self.AgentLog = logs
-            return self.AgentLog
+            return {"0": self.AgentLog}
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
         
@@ -501,10 +502,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         try:
             wmi = wmi.WMI()
             data = {}
-            count = -1
             for s in wmi.Win32_QuickFixEngineering(["Caption", "CSName", "Description", "FixComments", "HotFixID", "InstalledBy", "InstalledOn", "Status"]):     
                 subWindowsUpdates = {}
-                count = count +1
                 subWindowsUpdates["Caption"] = s.Caption
                 subWindowsUpdates["CSName"] = s.CSName
                 subWindowsUpdates["Description"] = s.D
@@ -604,10 +603,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_services(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_Service(["Caption", "Description", "Status", "DisplayName", "State", "StartMode"]):
-                count = count +1
                 subService = {}
                 subService["Description"] = s.Description
                 subService["Status"] = s.Status
@@ -645,10 +642,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_startup(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_StartupCommand(["Caption", "Command", "Location"]):
-                count = count +1
                 subStartup = {}
                 subStartup["Location"] = s.Location
                 subStartup["Command"] = s.Command
@@ -664,9 +659,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         try:
             wmi = wmi.WMI()
             data = {}
-            count = -1
             for s in wmi.Win32_OptionalFeature(["Caption", "Description", "InstallDate", "Status", "Name", "InstallState"]):
-                count = count +1
                 subOptionalFeatures = {}
                 subOptionalFeatures["Description"] = s.Description
                 subOptionalFeatures["InstallDate"] = s.InstallDate
@@ -684,10 +677,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_processes(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_Process(["Caption", "Description", "ParentProcessId", "ProcessId", "Status", "Name"]):
-                count = count +1
                 subProcesses = {}
                 subProcesses["Description"] = s.Description
                 subProcesses["ParentProcessId"] = s.ParentProcessId
@@ -705,10 +696,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_users(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_UserAccount(["Caption", "Description", "AccountType", "Disabled", "Domain", "FullName", "LocalAccount", "PasswordChangeable", "PasswordExpires", "PasswordRequired", "Name"]):
-                count = count +1
                 subUserAccounts = {}
                 subUserAccounts["Description"] = s.Description
                 subUserAccounts["AccountType"] = s.AccountType
@@ -731,10 +720,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_video_configuration(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_VideoConfiguration(["Caption", "Description", "AdapterChipType", "AdapterCompatibility", "AdapterDescription", "HorizontalResolution", "MonitorManufacturer", "MonitorType", "Name", "ScreenHeight", "ScreenWidth", "VerticalResolution"]):
-                count = count +1
                 subVideoConfiguration = {}
                 subVideoConfiguration["AdapterChipType"] = s.AdapterChipType
                 subVideoConfiguration["AdapterCompatibility"] = s.AdapterCompatibility
@@ -757,10 +744,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_logical_disk(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_LogicalDisk(["Description", "Name", "ProviderName", "Status", "VolumeName", "VolumeSerialNumber", "FileSystem", "DeviceID", "Caption", "PNPDeviceID", "Compressed", "FreeSpace", "Size", "VolumeSerialNumber"]):
-                count = count +1
                 subLogicalDisk = {}
                 subLogicalDisk["Description"] = s.Description
                 subLogicalDisk["Name"] = s.Name
@@ -785,10 +770,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_mapped_logical_disk(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_MappedLogicalDisk(["Caption", "Compressed", "Description", "FileSystem", "FreeSpace", "Name", "PNPDeviceID", "ProviderName", "Size", "Status", "SystemName", "VolumeName", "VolumeSerialNumber"]):
-                count = count +1 
                 subMappedLogicalDisk = {}
                 subMappedLogicalDisk["Compressed"] = s.Compressed
                 subMappedLogicalDisk["Description"] = s.Description
@@ -813,10 +796,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_physical_memory(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_PhysicalMemory(["BankLabel", "Capacity", "ConfiguredClockSpeed", "Description", "DeviceLocator", "FormFactor", "Manufacturer", "MemoryType", "Model", "Name", "PartNumber", "PositionInRow", "Speed", "Status"]):
-                count = count +1
                 subPhysicalMemory = {}
                 subPhysicalMemory["BankLabel"] = s.BankLabel
                 subPhysicalMemory["Capacity"] = s.Capacity
@@ -842,10 +823,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_pointing_device(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_PointingDevice(["Caption", "Description", "DeviceID", "Manufacturer", "Name", "Status"]):
-                count = count +1
                 subPointingDevice = {}
                 subPointingDevice["Caption"] = s.Caption
                 subPointingDevice["Description"] = s.Description
@@ -863,10 +842,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_keyboard(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_Keyboard(["Caption", "Description", "DeviceID", "Name", "Status"]):
-                count = count +1
                 subKeyboard = {}
                 subKeyboard["Caption"] = s.Caption
                 subKeyboard["Description"] = s.Description
@@ -883,10 +860,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_base_board(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_BaseBoard(["Caption", "Description", "Manufacturer", "Model", "Name", "Product", "SerialNumber", "Status", "Tag", "Version"]):
-                count = count +1
                 subBaseBoard = {}
                 subBaseBoard["Caption"] = s.Caption
                 subBaseBoard["Description"] = s.Description
@@ -908,10 +883,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_desktop_monitor(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_DesktopMonitor(["Caption", "Description", "DeviceID", "MonitorManufacturer", "MonitorType", "Name", "Status", "ScreenHeight", "ScreenWidth"]):
-                count = count +1
                 subDesktopMonitor = {}
                 subDesktopMonitor["Caption"] = s.Caption
                 subDesktopMonitor["Description"] = s.Description
@@ -932,10 +905,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_printers(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_Printer(["Caption", "Description", "Default", "DeviceID", "DriverName", "Local", "Name", "Network", "PortName", "Shared"]):
-                count = count +1
                 subPrinter = {}
                 subPrinter["Caption"] = s.Caption
                 subPrinter["Description"] = s.Description
@@ -957,10 +928,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_network_login_profile(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_NetworkLoginProfile(["Caption", "Description", "FullName", "HomeDirectory", "Name", "NumberOfLogons"]):
-                count = count +1
                 subNetworkLoginProfile = {}
                 subNetworkLoginProfile["Caption"] = s.Caption
                 subNetworkLoginProfile["Description"] = s.Description
@@ -978,10 +947,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_network_adapters(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_NetworkAdapterConfiguration(["Caption", "Description", "DHCPEnabled", "DHCPLeaseExpires", "DHCPLeaseObtained", "DHCPServer", "DNSDomain", "MACAddress", "Index", "IPAddress"], IPEnabled=1):
-                count = count +1
                 subNetworkAdapter = {}
                 subNetworkAdapter["Caption"] = s.Caption
                 subNetworkAdapter["Description"] = s.Description
@@ -1003,10 +970,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_pnp_entities(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_PnPEntity(["Caption", "Description", "DeviceID", "Manufacturer", "Name", "PNPClass", "PNPDeviceID", "Present", "Service", "Status"]):
-                count = count +1
                 subPnPEntity = {}
                 subPnPEntity["Caption"] = s.Caption
                 subPnPEntity["Description"] = s.Description
@@ -1028,10 +993,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_sound_devices(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_SoundDevice(["Caption", "Description", "DeviceID", "Manufacturer", "Name", "ProductName", "Status"]):
-                count = count +1
                 subSoundDevice = {}
                 subSoundDevice["Caption"] = s.Caption
                 subSoundDevice["Description"] = s.Description
@@ -1050,10 +1013,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_scsi_controller(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_SCSIController(["Caption", "Description", "DeviceID", "Manufacturer", "Name", "DriverName"]):
-                count = count +1
                 subSCSIController = {}
                 subSCSIController["Caption"] = s.Caption
                 subSCSIController["Description"] = s.Description
@@ -1071,10 +1032,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_products(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_Product(["Caption", "Description", "IdentifyingNumber", "InstallLocation", "InstallState", "Name", "Vendor", "Version"]):
-                count = count +1
                 subProduct = {}
                 subProduct["Caption"] = s.Caption
                 subProduct["Description"] = s.Description
@@ -1153,10 +1112,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_battery(self, wmi, payload=None):
         try:
             wmi = wmi.WMI()
-            count = -1
             data = {}
             for s in wmi.Win32_Battery(["Caption", "Description", "DeviceID", "EstimatedChargeRemaining", "EstimatedRunTime", "ExpectedBatteryLife", "ExpectedLife", "FullChargeCapacity", "MaxRechargeTime", "Name", "PNPDeviceID", "SmartBatteryVersion", "Status", "TimeOnBattery", "TimeToFullCharge", "BatteryStatus"]):
-                count = count +1
                 subBattery = {}
                 subBattery["Caption"] = s.Caption
                 subBattery["Description"] = s.Description
@@ -1179,6 +1136,23 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("battery", e, "Error")
+
+    # Get Serial Ports
+    def get_serial_ports(self, wmi, payload=None):
+        try:
+            wmi = wmi.WMI()
+            data = {}
+            for s in wmi.Win32_SerialPort(["Caption", "Description", "Name"]):
+                subSerialPort = {}
+                subSerialPort["Caption"] = s.Caption
+                subSerialPort["Description"] = s.Description
+                subSerialPort["Name"] = s.Name
+     
+                data[s.Caption] = subSerialPort
+            return data
+        except Exception as e:
+            if(DEBUG): print(traceback.format_exc())
+            self.log("serial_ports", e, "Error")
 
     # Get Filesystem
     def get_filesystem(self, wmi, payload=None):
