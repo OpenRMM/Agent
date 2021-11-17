@@ -32,7 +32,7 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "dev-2.0.6"
+Agent_Version = "dev-2.0.7"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
@@ -426,11 +426,17 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def set_update_agent(self, wmi, payload=None):
         if("data" in payload):
             if("update_url" in payload["data"]):
-                updateURL = payload['data']['update_url']
-                self.log("Update Agent", "Update Requested")  
-                proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat " + updateURL, shell=True)
-                time.sleep(2)
-                self.SvcStop()
+                update_url = payload['data']['update_url']
+
+                # Check if update_url is online and reachable
+                response_code = urllib.request.urlopen(update_url).getcode()
+                if(response_code == 200):
+                    self.log("Update Agent", "Update Requested: " + update_url)  
+                    proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat " + update_url, shell=True)
+                    time.sleep(2)
+                    self.SvcStop()
+                else:
+                    self.log("Update Agent", "Cannot update, update URL: " + update_url + " is unreachable: " + str(response_code), "Warn") 
             else:
                 self.log("Update Agent", "Cannot update, missing update_url", "Warn")
         else:
