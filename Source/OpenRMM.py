@@ -28,16 +28,11 @@ from dictdiffer import diff, patch, swap, revert
 import speedtest
 
 ################################# SETUP ##################################
-MQTT_Server = "*****"
-MQTT_Username = "****"
-MQTT_Password = "******"
-MQTT_Port = 1884
-
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "dev-2.0.1"
+Agent_Version = "dev-2.0.3"
 
 LOG_File = "C:\OpenRMM.log"
 DEBUG = False
@@ -100,18 +95,19 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     self.log("Setup", "Getting data from C:\OpenRMM.json")
                     f = open("C:\OpenRMM.json", "r")
                     self.AgentSettings = json.loads(f.read())
-                    self.Public_Key = rsa.PublicKey.load_pkcs1(self.AgentSettings["Setup"]["Public_Key"].encode('utf8'))
                 else:
-                    self.log("Read ID From File", "Could not get data from file: C:\OpenRMM.json, file dont exist", "Warn")
+                    self.log("Read Config File", "Could not get data from file: C:\OpenRMM.json, file dont exist", "Error")
+                    sys.stop()
             except Exception as e:
-                self.log("Read ID From File", e, "Error")
+                self.log("Read Config File", e, "Error")
+                sys.stop()
 
             try:
                 self.log("Setup", "Starting MQTT")
                 self.mqtt = mqtt.Client(client_id=self.session_id, clean_session=True)
-                self.mqtt.username_pw_set(MQTT_Username, MQTT_Password)
+                self.mqtt.username_pw_set(self.AgentSettings["MQTT"]["Username"], self.AgentSettings["MQTT"]["Password"])
                 self.mqtt.will_set(self.session_id + "/Status", "0", qos=1, retain=True)
-                self.mqtt.connect(MQTT_Server, port=MQTT_Port)
+                self.mqtt.connect(self.AgentSettings["MQTT"]["Server"], port=self.AgentSettings["MQTT"]["Port"])
                 self.mqtt.subscribe(self.session_id + "/Commands/#", qos=1)
                 self.mqtt.on_message = self.on_message
                 self.mqtt.on_connect = self.on_connect
@@ -139,13 +135,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # The callback for when the client receives a CONNACK response from the server.
     def on_connect(self, client, userdata, flags, rc):
         self.MQTT_flag_connected = 1
-        self.log("MQTT", "Connected to server: " + MQTT_Server + " with result code " + str(rc))
-        if(exists("C:\OpenRMM.json") == False):
+        self.log("MQTT", "Connected to server: " + self.AgentSettings["MQTT"]["Server"] + " with result code " + str(rc))
+        if("Setup" not in self.AgentSettings):
             self.log("MQTT", "Sending New Agent command to server")
             self.mqtt.publish(self.session_id + "/Agent/New", "true", qos=1, retain=False)
         else:
-            if("Setup" in self.AgentSettings):
-                self.getReady()
+            self.getReady()
 
     def on_disconnect(self, xclient, userdata, rc):
         self.MQTT_flag_connected = 0
@@ -425,7 +420,21 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         Interval["event_log_security"] = 60
         
         self.AgentSettings['Configurable'] = {'Interval': Interval}
-    
+
+    # Update the Agent
+    def set_update_agent(self, wmi, payload=None):
+        if("data" in payload):
+            if("update_url" in payload["data"]):
+                updateURL = payload['data']['update_url']
+                self.log("Update Agent", "Update Requested")  
+                proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat", shell=True)
+                time.sleep(2)
+                self.SvcStop()
+            else:
+                self.log("Update Agent", "Cannot update, missing update_url", "Warn")
+        else:
+            self.log("Update Agent", "Cannot update, missing data[update_url]", "Warn")
+
     # Set Agent Settings, 315/Commands/setAgentSettings, {"Interval": {"getFilesystem": 30, "getBattery": 30}}
     def set_agent_settings(self, wmi, payload=None):
         self.log("MQTT", "Got Agent Settings")
