@@ -493,7 +493,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(count > 0):
                 print("Removed " + str(count) + " log entrys, they were " + str((d1 - d2).days) + " days old.")
             self.AgentLog = logs
-            return {"0": self.AgentLog}
+            return self.AgentLog
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
         
