@@ -32,7 +32,7 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.1.1"
+Agent_Version = "2.1.2"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
@@ -182,7 +182,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         encMessage = self.Fernet.encrypt(json.dumps(self.CMD(message.payload)).encode())
                         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/CMD", encMessage, qos=1)
                     # Other Commands
-                    elif(command[2][0:4] == "get_" or command[2][0:4] == "set_"): 
+                    elif(command[2][0:4] == "get_" or command[2][0:4] == "set_" or command[2][0:4] == "act_"): 
                         threading.Thread(target=self.startThread, args=[command[2], False, message.payload.decode('utf-8')]).start()
                 self.command = {}
             except Exception as e:
@@ -425,7 +425,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.AgentSettings['Configurable'] = {'Interval': Interval}
 
     # Update the Agent
-    def set_update_agent(self, wmi, payload=None):
+    def act_update_agent(self, wmi, payload=None):
         if("data" in payload):
             if("update_url" in payload["data"]):
                 update_url = payload['data']['update_url']
@@ -443,6 +443,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 self.log("Update Agent", "Cannot update, missing update_url", "Warn")
         else:
             self.log("Update Agent", "Cannot update, missing data[update_url]", "Warn")
+
+    def act_restart_agent(self, wmi, payload=None):
+        self.log("Restart Agent", "Restart Requested")
+
+    def act_stop_agent(self, wmi, payload=None):
+        self.log("Stop Agent", "Stop Requested")  
+        self.SvcStop()
 
     # Set Agent Settings, 315/Commands/setAgentSettings, {"Interval": {"getFilesystem": 30, "getBattery": 30}}
     def set_agent_settings(self, wmi, payload=None):
@@ -1173,7 +1180,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subFilesystem = []
                 for item in os.listdir(root):
                     subFilesystem.append(os.path.join(root, item).replace("\\","/"))
-                    data["0"] = subFilesystem
+                data["0"] = subFilesystem
                 return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
