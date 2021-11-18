@@ -32,7 +32,7 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "dev-2.0.9"
+Agent_Version = "2.1.0"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
@@ -316,8 +316,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     
                     if(functionName[4:] == "screenshot"):
                         encMessage = self.Fernet.encrypt(New)
+                        self.Cache[functionName[4:]] = New
                     else:
                         result = diff({}, New)
+                        self.Cache[functionName[4:]] = New
                         data["Request"] = payload # Pass request payload to response
                         data["Response"] = list(result)
                         encMessage = self.Fernet.encrypt(json.dumps(data).encode())
@@ -1322,4 +1324,3 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
 if __name__ == "__main__":
     win32serviceutil.HandleCommandLine(OpenRMMAgent)
-
