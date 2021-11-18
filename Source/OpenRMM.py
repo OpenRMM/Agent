@@ -32,7 +32,7 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.1.2"
+Agent_Version = "2.1.3"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
@@ -83,7 +83,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.Cache = {}
             self.lastRan = {}
             self.AgentLog = []
-            self.ignoreRateLimit = ["get_filesystem", "get_event_logs"]
+            self.ignoreRateLimit = ["get_filesystem", "get_event_logs", "get_agent_settings", "set_agent_settings"]
             self.isrunning = True
             self.session_id = str(randint(1000000000000000, 1000000000000000000))
             self.MQTT_flag_connected = 0
@@ -456,7 +456,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.log("MQTT", "Got Agent Settings")
         try:
             self.AgentSettings['Configurable'] = {'Interval': payload["Interval"]}
-            self.saveAgentSettings()      
+            self.saveAgentSettings()
+            return {'Interval': payload["Interval"]} 
         except Exception as e:
             self.log("set_agent_settings", e, "Error")
 
