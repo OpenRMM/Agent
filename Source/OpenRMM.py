@@ -32,7 +32,7 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.1.3"
+Agent_Version = "2.1.4"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
@@ -267,6 +267,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.threadWindowsActivation = threading.Thread(target=self.startThread, args=["get_windows_activation", True]).start()
             self.threadAgentLog = threading.Thread(target=self.startThread, args=["get_agent_log", True]).start()
             self.threadAgentSettings = threading.Thread(target=self.startThread, args=["get_agent_settings", True]).start()
+            self.threadAutoUpdate = threading.Thread(target=self.auto_update, args=[]).start()
             # self.threadOklaSpeedtest = threading.Thread(target=self.startThread, args=["get_okla_speedtest", True]).start()
 
             self.log("Start", "Threads: Started")
@@ -383,6 +384,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def setAgentDefaults(self):
         self.log("Start", "Setting Agent Default Settings")
         Interval = {}
+        Updates = {}
         Interval["heartbeat"] = 1
         Interval["agent_log"] = 15
         Interval["general"] = 10
@@ -421,14 +423,31 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         Interval["event_log_setup"] = 60
         Interval["event_log_security"] = 60
         Interval["serial_ports"] = 60
-        
-        self.AgentSettings['Configurable'] = {'Interval': Interval}
 
-    # Update the Agent
-    def act_update_agent(self, wmi, payload=None):
-        if("data" in payload):
-            if("update_url" in payload["data"]):
-                update_url = payload['data']['update_url']
+        Updates["auto_update"] = 0
+        Updates["update_url"] = "https://raw.githubusercontent.com/OpenRMM/Agent/main/Source/OpenRMM.py"
+        Updates["check_interval"] = 1440
+        
+        self.AgentSettings['Configurable'] = {'Interval': Interval, "Updates": Updates}
+
+    # Auto Update the Agent
+    def auto_update(self):
+        if("Configurable" in self.AgentSettings):
+            if("Updates" in self.AgentSettings['Configurable']):
+                # Loop for periodic updates
+                loopCount = 0
+                while self.AgentSettings['Configurable']['Updates']["auto_update"] == 1:
+                    time.sleep(1)
+                    loopCount = loopCount + 1
+                    if (loopCount == (60 * self.AgentSettings['Configurable']['Updates']["check_interval"])): # Every x minutes
+                        loopCount = 0
+                        self.act_update_agent()
+
+    # Manual Update the Agent
+    def act_update_agent(self, wmi=None, payload=None):
+        if("Configurable" in self.AgentSettings):
+            if("Updates" in self.AgentSettings['Configurable']):
+                update_url = self.AgentSettings['Configurable']['Updates']['update_url']
 
                 # Check if update_url is online and reachable
                 response_code = urllib.request.urlopen(update_url).getcode()
@@ -444,9 +463,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         else:
             self.log("Update Agent", "Cannot update, missing data[update_url]", "Warn")
 
+    # Restart Agent
     def act_restart_agent(self, wmi, payload=None):
         self.log("Restart Agent", "Restart Requested")
 
+    # Stop Agent
     def act_stop_agent(self, wmi, payload=None):
         self.log("Stop Agent", "Stop Requested")  
         self.SvcStop()
@@ -455,9 +476,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def set_agent_settings(self, wmi, payload=None):
         self.log("MQTT", "Got Agent Settings")
         try:
-            self.AgentSettings['Configurable'] = {'Interval': payload["Interval"]}
+            self.AgentSettings['Configurable'] = {'Interval': payload["Interval"], "Updates": payload["Updates"]}
             self.saveAgentSettings()
-            return {'Interval': payload["Interval"]} 
+            return self.AgentSettings['Configurable']
         except Exception as e:
             self.log("set_agent_settings", e, "Error")
 
@@ -471,7 +492,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(payload["data"]["Type"] == "prompt"): response = pyautogui.prompt(payload["data"]["Message"], payload["data"]["Title"], '')
                 if(payload["data"]["Type"] == "password"): response = pyautogui.password(payload["data"]["Message"], payload["data"]["Title"], '', mask='*')
             return response
-            self.log("Alert", "Sending Alert Response: " + response)
+            
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("set_alert", e, "Error")
@@ -522,8 +543,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subWindowsUpdates = {}
                 subWindowsUpdates["Caption"] = s.Caption
                 subWindowsUpdates["CSName"] = s.CSName
-                subWindowsUpdates["Description"] = s.D
-                escription
+                subWindowsUpdates["Description"] = s.Description
                 subWindowsUpdates["FixComments"] = s.FixComments
                 subWindowsUpdates["HotFixID"] = s.HotFixID
                 subWindowsUpdates["InstalledBy"] = s.InstalledBy
