@@ -454,7 +454,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(response_code == 200):
                     self.log("Update Agent", "Update Requested: " + update_url)  
                     proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat " + update_url, shell=True)
-                    time.sleep(2)
                     self.SvcStop()
                 else:
                     self.log("Update Agent", "Cannot update, update URL: " + update_url + " is unreachable: " + str(response_code), "Warn") 
