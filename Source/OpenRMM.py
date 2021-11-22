@@ -11,7 +11,7 @@ import threading
 import pythoncom
 import pyautogui
 import io, sys
-import PIL
+from PIL import Image
 import win32serviceutil, win32event, win32service, win32con, win32evtlogutil, win32evtlog, win32security, win32api, winerror
 from win32com.client import GetObject
 import servicemanager
@@ -25,21 +25,21 @@ import datetime
 import rsa
 from cryptography.fernet import Fernet
 from dictdiffer import diff, patch, swap, revert
-import speedtest
+import mss
 
 ################################# SETUP ##################################
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.1.4"
+Agent_Version = "2.1.5"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
 
 ###########################################################################
 
-required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow', 'scandir', 'speedtest-cli', 'cryptography', 'rsa', 'dictdiffer'}
+required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow', 'scandir', 'cryptography', 'rsa', 'dictdiffer' , 'mss'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 
@@ -85,18 +85,19 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.AgentLog = []
             self.ignoreRateLimit = ["get_filesystem", "get_event_logs", "get_agent_settings", "set_agent_settings"]
             self.isrunning = True
+            self.go = False # Prevent function go() running more than once
             self.session_id = str(randint(1000000000000000, 1000000000000000000))
             self.MQTT_flag_connected = 0
             self.rateLimit = 120
             self.log("Setup", "Agent Starting")    
 
             try:
-                if(exists("C:\OpenRMM.json")):
-                    self.log("Setup", "Getting data from C:\OpenRMM.json")
-                    f = open("C:\OpenRMM.json", "r")
-                    self.AgentSettings = json.loads(f.read())
+                if(exists("C:\OpenRMM\Agent\OpenRMM.json")):
+                    self.log("Setup", "Getting data from C:\OpenRMM\Agent\OpenRMM.json")
+                    file = open("C:\OpenRMM\Agent\OpenRMM.json", "r").read()
+                    self.AgentSettings = json.loads(file)
                 else:
-                    self.log("Read Config File", "Could not get data from file: C:\OpenRMM.json, file dont exist", "Error")
+                    self.log("Read Config File", "Could not get data from file: C:\OpenRMM\Agent\OpenRMM.json, file dont exist", "Error")
                     sys.stop()
             except Exception as e:
                 self.log("Read Config File", e, "Error")
@@ -119,7 +120,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("Setup", "Starting WMI")
             pythoncom.CoInitialize()
             self.wmimain = wmi.WMI()
-            self.main()
+            
+            # Forever loop to keep alive
+            while self.isrunning: time.sleep(0.1)
 
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -128,9 +131,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.isrunning = False
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         win32event.SetEvent(self.hWaitStop)  
-
-    def main(self):
-        while self.isrunning: time.sleep(0.1)
 
     # The callback for when the client receives a CONNACK response from the server.
     def on_connect(self, client, userdata, flags, rc):
@@ -152,18 +152,20 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         # Ready is sent on agent start, first step in connection is public key exchange
         if (str(message.topic) == self.session_id + "/Commands/New"):
             self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
-            self.log("MQTT", "Got ID From server, Setting Up Agent with ID: " + str(self.AgentSettings["Setup"]["ID"]))
-            if("Setup" in self.AgentSettings):
+            if("ID" in self.AgentSettings["Setup"]):
+                self.log("MQTT", "Got ID From server, Setting Up Agent with ID: " + str(self.AgentSettings["Setup"]["ID"]))
                 self.getReady()
         
         if(str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Ready"):
+            # This is were required data is recived from the server, this is ran everytime
             self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
             self.log("MQTT", "Setting Up Agent with ID: " + str(self.AgentSettings["Setup"]["ID"]))
-            self.saveAgentSettings()
+            self.save_agent_settings()
             self.getSet()
 
         # Server has everything it needs for us to start
-        if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Go"):
+        if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Go" and self.go == False):
+            self.go = True
             self.Go()
 
         # Sync message recieved from server, update keys
@@ -172,7 +174,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.getSet("Sync")
 
         # Make sure we have the base settings, ID, Salt then start listining to commands
-        if( "Setup" in self.AgentSettings):
+        if("Setup" in self.AgentSettings):
             try:
                 # Process Commands
                 command = message.topic.split("/")
@@ -183,12 +185,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/CMD", encMessage, qos=1)
                     # Other Commands
                     elif(command[2][0:4] == "get_" or command[2][0:4] == "set_" or command[2][0:4] == "act_"): 
-                        threading.Thread(target=self.startThread, args=[command[2], False, message.payload.decode('utf-8')]).start()
+                        threading.Thread(target=self.start_thread, args=[command[2], False, message.payload.decode('utf-8')]).start()
                 self.command = {}
             except Exception as e:
                 self.log("Commands", e, "Error")
 
     def getReady(self):
+        print("Sending session key to server, Agent Ready")
+
         # Prep MQTT
         self.mqtt.unsubscribe(self.session_id + "/Commands/#")
         self.mqtt.subscribe(str(self.AgentSettings["Setup"]["ID"]) + "/Commands/#", qos=1)
@@ -198,12 +202,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Ready", json.dumps(payload), qos=1, retain=False)
 
     def getSet(self, setType="Startup"):
+        print("Server revieved session key, Sending agent encryption key to server, waiting for server to confirm")
+
         self.Public_Key = rsa.PublicKey.load_pkcs1(self.AgentSettings["Setup"]["Public_Key"].encode('utf8'))
 
         # Generate Salt
         self.AgentSettings["Setup"]["salt"] = str(Fernet.generate_key(), "utf-8")
         self.Fernet = Fernet(self.AgentSettings["Setup"]["salt"])
-        print("Salt is: " + self.AgentSettings["Setup"]["salt"])
 
         # Send RSA encrypted key & session_id to the server
         self.log("Encryption", "Sending salt to server")
@@ -212,63 +217,66 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         if(setType == "Startup"):
             self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Set", RSAEncryptedSalt, qos=1, retain=False)
         elif(setType == "Sync"):
+            # The Agent session ID also need to sent here
             self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Sync", RSAEncryptedSalt, qos=1, retain=False)
 
     def Go(self):
+        print("Server revieved encryption key, lets start")
+
         # Changing status to Online
         self.mqtt.publish(self.session_id + "/Status", "1", qos=1, retain=True)
 
         self.log("Start", "Recieved Go command from server. Agent Version: " + Agent_Version)
 
         # Check if got agent settings here, if not load defaults
-        if("Configurable" not in self.AgentSettings): self.setAgentDefaults()
+        if("Configurable" not in self.AgentSettings): self.agent_defaults()
 
         # Creating Threads
         if(self.MQTT_flag_connected == 1):
             self.log("Start", "Threads: Starting")
-            self.threadHeartbeat = threading.Thread(target=self.startThread, args=["get_heartbeat", True]).start()
-            self.threadAgentLog = threading.Thread(target=self.startThread, args=["get_agent_log", True]).start()
-            self.threadGeneral = threading.Thread(target=self.startThread, args=["get_general", True]).start()
-            self.threadBIOS = threading.Thread(target=self.startThread, args=["get_bios", True]).start()
-            self.threadStartup = threading.Thread(target=self.startThread, args=["get_startup", True]).start()
-            self.threadOptionalFeatures = threading.Thread(target=self.startThread, args=["get_optional_features", True]).start()
-            self.threadProcesses = threading.Thread(target=self.startThread, args=["get_processes", True]).start()
-            self.threadServices = threading.Thread(target=self.startThread, args=["get_services", True]).start()
-            self.threadUserAccounts = threading.Thread(target=self.startThread, args=["get_users", True]).start()
-            self.threadVideoConfiguration = threading.Thread(target=self.startThread, args=["get_video_configuration", True]).start()
-            self.threadLogicalDisk = threading.Thread(target=self.startThread, args=["get_logical_disk", True]).start()
-            self.threadMappedLogicalDisk = threading.Thread(target=self.startThread, args=["get_mapped_logical_disk", True]).start()
-            self.threadPhysicalMemory = threading.Thread(target=self.startThread, args=["get_physical_memory", True]).start()
-            self.threadPointingDevice = threading.Thread(target=self.startThread, args=["get_pointing_device", True]).start()
-            self.threadKeyboard = threading.Thread(target=self.startThread, args=["get_keyboard", True]).start()
-            self.threadBaseBoard = threading.Thread(target=self.startThread, args=["get_base_board", True]).start()
-            self.threadDesktopMonitor = threading.Thread(target=self.startThread, args=["get_desktop_monitor", True]).start()
-            self.threadPrinter = threading.Thread(target=self.startThread, args=["get_printers", True]).start()
-            self.threadNetworkLoginProfile = threading.Thread(target=self.startThread, args=["get_network_login_profile", True]).start()
-            self.threadNetworkAdapters = threading.Thread(target=self.startThread, args=["get_network_adapters", True]).start()
-            self.threadPnPEntity = threading.Thread(target=self.startThread, args=["get_pnp_entities", True]).start()
-            self.threadSoundDevice = threading.Thread(target=self.startThread, args=["get_sound_devices", True]).start()
-            self.threadSCSIController = threading.Thread(target=self.startThread, args=["get_scsi_controller", True]).start()
-            self.threadProduct = threading.Thread(target=self.startThread, args=["get_products", True]).start()
-            self.threadProcessor = threading.Thread(target=self.startThread, args=["get_processor", True]).start()
-            self.threadFirewall = threading.Thread(target=self.startThread, args=["get_firewall", True]).start()
-            self.threadAgent = threading.Thread(target=self.startThread, args=["get_agent", True]).start()
-            self.threadBattery = threading.Thread(target=self.startThread, args=["get_battery", True]).start()
-            self.threadFilesystem = threading.Thread(target=self.startThread, args=["get_filesystem", True, {"data":"C:\\"}]).start()
-            self.threadSharedDrives = threading.Thread(target=self.startThread, args=["get_shared_drives", True]).start()
-            self.threadEventLogs_System = threading.Thread(target=self.startThread, args=["get_event_log_system", True]).start()
-            self.threadEventLogs_Application = threading.Thread(target=self.startThread, args=["get_event_log_application", True]).start()
-            self.threadEventLogs_Security = threading.Thread(target=self.startThread, args=["get_event_log_security", True]).start()
-            self.threadEventLogs_Setup = threading.Thread(target=self.startThread, args=["get_event_log_setup", True]).start()
-            self.threadScreenshot = threading.Thread(target=self.startThread, args=["get_screenshot", True]).start()
+            self.thread_heartbeat = threading.Thread(target=self.start_thread, args=["get_heartbeat", True]).start()
+            self.thread_agent_log = threading.Thread(target=self.start_thread, args=["get_agent_log", True]).start()
+            self.thread_general = threading.Thread(target=self.start_thread, args=["get_general", True]).start()
+            self.thread_bios = threading.Thread(target=self.start_thread, args=["get_bios", True]).start()
+            self.thread_startup = threading.Thread(target=self.start_thread, args=["get_startup", True]).start()
+            self.thread_optional_features = threading.Thread(target=self.start_thread, args=["get_optional_features", True]).start()
+            self.thread_processes = threading.Thread(target=self.start_thread, args=["get_processes", True]).start()
+            self.thread_services = threading.Thread(target=self.start_thread, args=["get_services", True]).start()
+            self.thread_user_accounts = threading.Thread(target=self.start_thread, args=["get_users", True]).start()
+            self.thread_video_configuration = threading.Thread(target=self.start_thread, args=["get_video_configuration", True]).start()
+            self.thread_logical_disk = threading.Thread(target=self.start_thread, args=["get_logical_disk", True]).start()
+            self.thread_mapped_logical_disk = threading.Thread(target=self.start_thread, args=["get_mapped_logical_disk", True]).start()
+            self.thread_physical_memory = threading.Thread(target=self.start_thread, args=["get_physical_memory", True]).start()
+            self.thread_pointing_device = threading.Thread(target=self.start_thread, args=["get_pointing_device", True]).start()
+            self.thread_keyboard = threading.Thread(target=self.start_thread, args=["get_keyboard", True]).start()
+            self.thread_base_board = threading.Thread(target=self.start_thread, args=["get_base_board", True]).start()
+            self.thread_desktop_monitor = threading.Thread(target=self.start_thread, args=["get_desktop_monitor", True]).start()
+            self.thread_printer = threading.Thread(target=self.start_thread, args=["get_printers", True]).start()
+            self.thread_network_login_profile = threading.Thread(target=self.start_thread, args=["get_network_login_profile", True]).start()
+            self.thread_network_adapters = threading.Thread(target=self.start_thread, args=["get_network_adapters", True]).start()
+            self.thread_pnp_entities = threading.Thread(target=self.start_thread, args=["get_pnp_entities", True]).start()
+            self.thread_sound_device = threading.Thread(target=self.start_thread, args=["get_sound_devices", True]).start()
+            self.thread_scsi_controller = threading.Thread(target=self.start_thread, args=["get_scsi_controller", True]).start()
+            self.thread_product = threading.Thread(target=self.start_thread, args=["get_products", True]).start()
+            self.thread_processor = threading.Thread(target=self.start_thread, args=["get_processor", True]).start()
+            self.thread_firewall = threading.Thread(target=self.start_thread, args=["get_firewall", True]).start()
+            self.thread_agent = threading.Thread(target=self.start_thread, args=["get_agent", True]).start()
+            self.thread_battery = threading.Thread(target=self.start_thread, args=["get_battery", True]).start()
+            self.thread_filesystem = threading.Thread(target=self.start_thread, args=["get_filesystem", True, {"data":"C:\\"}]).start()
+            self.thread_shared_drives = threading.Thread(target=self.start_thread, args=["get_shared_drives", True]).start()
+            self.thread_event_logs_system = threading.Thread(target=self.start_thread, args=["get_event_log_system", True]).start()
+            self.thread_event_logs_application = threading.Thread(target=self.start_thread, args=["get_event_log_application", True]).start()
+            self.thread_event_logs_security = threading.Thread(target=self.start_thread, args=["get_event_log_security", True]).start()
+            self.thread_event_logs_setup = threading.Thread(target=self.start_thread, args=["get_event_log_setup", True]).start()
+            self.thread_screenshot = threading.Thread(target=self.start_thread, args=["get_screenshot", True]).start()
             
             # Send these only once on startup, unless an interval is defined by the front end
-            self.threadRegistry = threading.Thread(target=self.startThread, args=["get_registry", True]).start()
-            self.threadWindowsActivation = threading.Thread(target=self.startThread, args=["get_windows_activation", True]).start()
-            self.threadAgentLog = threading.Thread(target=self.startThread, args=["get_agent_log", True]).start()
-            self.threadAgentSettings = threading.Thread(target=self.startThread, args=["get_agent_settings", True]).start()
-            self.threadAutoUpdate = threading.Thread(target=self.auto_update, args=[]).start()
-            # self.threadOklaSpeedtest = threading.Thread(target=self.startThread, args=["get_okla_speedtest", True]).start()
+            self.thread_registry = threading.Thread(target=self.start_thread, args=["get_registry", True]).start()
+            self.thread_windows_activation = threading.Thread(target=self.start_thread, args=["get_windows_activation", True]).start()
+            self.thread_agent_log = threading.Thread(target=self.start_thread, args=["get_agent_log", True]).start()
+            self.thread_agent_settings = threading.Thread(target=self.start_thread, args=["get_agent_settings", True]).start()
+            self.thread_auto_update = threading.Thread(target=self.auto_update, args=[]).start()
+            self.thread_okla_speedtest = threading.Thread(target=self.start_thread, args=["get_okla_speedtest", True]).start()
 
             self.log("Start", "Threads: Started")
         else:
@@ -294,25 +302,29 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(DEBUG): print(traceback.format_exc())
 
     # Save Agent Settings to Json File
-    def saveAgentSettings(self):
-        # Save setup to File
-        f = open("C:\OpenRMM.json", "w")
-        f.write(json.dumps(self.AgentSettings))
-        f.close()
+    def save_agent_settings(self):
+        try:
+            # Save setup to File
+            f = open("C:\OpenRMM\Agent\OpenRMM.json", "w")
+            f.write(json.dumps(self.AgentSettings))
+            f.close()
+        except Exception as e:
+            if(DEBUG): print(traceback.format_exc())
+            self.log("save agent settings", e, "Error")   
 
     # Start Thread
-    def startThread(self, functionName, loop=False, payload="{}"):
+    def start_thread(self, functionName, loop=False, payload="{}"):
         try:
             if(self.MQTT_flag_connected == 1):
                 pythoncom.CoInitialize()
                 loopCount = 0
                 data = {}
-                # Set Default Value 
+                # Set Default Value
                 if(functionName[4:] not in self.Cache): self.Cache[functionName[4:]] = ""
 
                 # Send Data on Startup and on Threads
                 if(loop == True and functionName[0:4] == "get_"):
-                    self.log("Thread", functionName[4:] + ": Sending New Data")
+                    self.log("Thread", functionName[4:] + ": Getting New Data")
                     New = eval("self." + functionName + "(wmi, payload)")
                     
                     if(functionName[4:] == "screenshot"):
@@ -381,7 +393,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("Thread "+ str(line_number) +" - " + functionName, e, "Error")
 
     # Set Agent Default Settings
-    def setAgentDefaults(self):
+    def agent_defaults(self):
         self.log("Start", "Setting Agent Default Settings")
         Interval = {}
         Updates = {}
@@ -423,6 +435,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         Interval["event_log_setup"] = 60
         Interval["event_log_security"] = 60
         Interval["serial_ports"] = 60
+        Interval["okla_speedtest"] = 0
 
         Updates["auto_update"] = 0
         Updates["update_url"] = "https://raw.githubusercontent.com/OpenRMM/Agent/main/Source/OpenRMM.py"
@@ -432,35 +445,45 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Auto Update the Agent
     def auto_update(self):
-        if("Configurable" in self.AgentSettings):
-            if("Updates" in self.AgentSettings['Configurable']):
-                # Loop for periodic updates
-                loopCount = 0
-                while self.AgentSettings['Configurable']['Updates']["auto_update"] == 1:
-                    time.sleep(1)
-                    loopCount = loopCount + 1
-                    if (loopCount == (60 * self.AgentSettings['Configurable']['Updates']["check_interval"])): # Every x minutes
-                        loopCount = 0
-                        self.act_update_agent()
 
+        try:
+            if("Configurable" in self.AgentSettings):
+                if("Updates" in self.AgentSettings['Configurable']):
+                    # Loop for periodic updates
+                    loopCount = 0
+                    while self.AgentSettings['Configurable']['Updates']["auto_update"] == 1:
+                        time.sleep(1)
+                        loopCount = loopCount + 1
+                        if (loopCount == (60 * self.AgentSettings['Configurable']['Updates']["check_interval"])): # Every x minutes
+                            loopCount = 0
+                            self.act_update_agent()
+        except Exception as e:
+            if(DEBUG): print(traceback.format_exc())
+            self.log("auto_update", e, "Error")   
+
+############## ACT ##############
     # Manual Update the Agent
     def act_update_agent(self, wmi=None, payload=None):
-        if("Configurable" in self.AgentSettings):
-            if("Updates" in self.AgentSettings['Configurable']):
-                update_url = self.AgentSettings['Configurable']['Updates']['update_url']
+        try:
+            if("Configurable" in self.AgentSettings):
+                if("Updates" in self.AgentSettings['Configurable']):
+                    update_url = self.AgentSettings['Configurable']['Updates']['update_url']
 
-                # Check if update_url is online and reachable
-                response_code = urllib.request.urlopen(update_url).getcode()
-                if(response_code == 200):
-                    self.log("Update Agent", "Update Requested: " + update_url)  
-                    proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat " + update_url, shell=True)
-                    self.SvcStop()
+                    # Check if update_url is online and reachable
+                    response_code = urllib.request.urlopen(update_url).getcode()
+                    if(response_code == 200):
+                        self.log("Update Agent", "Update Requested: " + update_url)  
+                        proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat " + update_url, shell=True)
+                        self.SvcStop()
+                    else:
+                        self.log("Update Agent", "Cannot update, update URL: " + update_url + " is unreachable: " + str(response_code), "Warn") 
                 else:
-                    self.log("Update Agent", "Cannot update, update URL: " + update_url + " is unreachable: " + str(response_code), "Warn") 
+                    self.log("Update Agent", "Cannot update, missing update_url", "Warn")
             else:
-                self.log("Update Agent", "Cannot update, missing update_url", "Warn")
-        else:
-            self.log("Update Agent", "Cannot update, missing data[update_url]", "Warn")
+                self.log("Update Agent", "Cannot update, missing data[update_url]", "Warn")
+        except Exception as e:
+            if(DEBUG): print(traceback.format_exc())
+            self.log("act_update_agent", e, "Error")
 
     # Restart Agent
     def act_restart_agent(self, wmi, payload=None):
@@ -471,14 +494,16 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.log("Stop Agent", "Stop Requested")  
         self.SvcStop()
 
+############## SET ##############
     # Set Agent Settings, 315/Commands/setAgentSettings, {"Interval": {"getFilesystem": 30, "getBattery": 30}}
     def set_agent_settings(self, wmi, payload=None):
         self.log("MQTT", "Got Agent Settings")
         try:
             self.AgentSettings['Configurable'] = {'Interval': payload["Interval"], "Updates": payload["Updates"]}
-            self.saveAgentSettings()
+            self.save_agent_settings()
             return self.AgentSettings['Configurable']
         except Exception as e:
+            if(DEBUG): print(traceback.format_exc())
             self.log("set_agent_settings", e, "Error")
 
     # Show Alert
@@ -490,8 +515,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(payload["data"]["Type"] == "confirm"): response = pyautogui.confirm(payload["data"]["Message"], payload["data"]["Title"], ['Yes', 'No'])
                 if(payload["data"]["Type"] == "prompt"): response = pyautogui.prompt(payload["data"]["Message"], payload["data"]["Title"], '')
                 if(payload["data"]["Type"] == "password"): response = pyautogui.password(payload["data"]["Message"], payload["data"]["Title"], '', mask='*')
-            return response
-            
+            return response          
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("set_alert", e, "Error")
@@ -508,6 +532,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(DEBUG): print(traceback.format_exc())
             self.log("set_keyboard", e, "Error")
 
+############## GET ##############
     # Heartbeat
     def get_heartbeat(self, wmi, payload=None):
         return time.time()
@@ -1209,12 +1234,18 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # Get Screenshot
     def get_screenshot(self, wmi, payload=None):
         try:
-            screenshot = pyautogui.screenshot()
-            screenshot = screenshot.resize((800,800), PIL.Image.ANTIALIAS)
+            with mss.mss() as sct:
+                # Get rid of the first, as it represents the "All in One" monitor:
+                for num, monitor in enumerate(sct.monitors[1:], 1):
+                    # Get raw pixels from the screen
+                    sct_img = sct.grab(monitor)
+                    # Create the Image
+                    screenshot = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                    screenshot = screenshot.resize((800,800), PIL.Image.ANTIALIAS)
 
-            with io.BytesIO() as output:          
-                screenshot.save(output, format='JPEG')
-                return output.getvalue()
+                    with io.BytesIO() as output:          
+                        screenshot.save(output, format='JPEG')
+                        return output.getvalue()
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("screenshot", e, "Error")
@@ -1222,16 +1253,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # Get Okla Speedtest
     def get_okla_speedtest(self, wmi, payload=None):
         try:
-            servers = []
-            threads = None
-            s = speedtest.Speedtest()
-            s.get_servers(servers)
-            s.get_best_server()
-            s.download(threads=threads)
-            s.upload(threads=threads)
-            s.upload(pre_allocate=False)
-            s.results.share()
-            data = s.results.dict()
+            data = {}
+            command = "C:\OpenRMM\Agent\speedtest.exe --accept-license -f json"
+            data["0"] = json.loads(str(subprocess.check_output(command, shell=True), "utf-8"))
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
@@ -1336,7 +1360,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except Exception as e:
             self.log("EventLogSupport", e, "Error")
                     
-    # Run Code in CMD, Add Cache
+    # Run Code in CMD
     def CMD(self, payload):
         try:
             payload = json.loads(payload)
