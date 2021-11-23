@@ -9,9 +9,7 @@ import time, datetime
 import subprocess
 import threading
 import pythoncom
-import pyautogui
-import io, sys
-from PIL import Image
+import sys
 import win32serviceutil, win32event, win32service, win32con, win32evtlogutil, win32evtlog, win32security, win32api, winerror
 from win32com.client import GetObject
 import servicemanager
@@ -26,6 +24,7 @@ import rsa
 from cryptography.fernet import Fernet
 from dictdiffer import diff, patch, swap, revert
 import mss
+import zmq
 
 ################################# SETUP ##################################
 Service_Name = "OpenRMMAgent"
@@ -39,7 +38,7 @@ DEBUG = False
 
 ###########################################################################
 
-required = {'paho-mqtt', 'pyautogui', 'pywin32', 'wmi', 'pillow', 'scandir', 'cryptography', 'rsa', 'dictdiffer' , 'mss'}
+required = {'paho-mqtt', 'pywin32', 'wmi', 'pillow', 'scandir', 'cryptography', 'rsa', 'dictdiffer' , 'mss', 'pyzmq'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 
@@ -89,7 +88,15 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.session_id = str(randint(1000000000000000, 1000000000000000000))
             self.MQTT_flag_connected = 0
             self.rateLimit = 120
-            self.log("Setup", "Agent Starting")    
+            self.log("Setup", "Agent Starting") 
+
+            try:
+                print("Starting Socket server on port 5554")
+                self.context = zmq.Context()
+                self.socket = self.context.socket(zmq.REP)
+                self.socket.bind("tcp://*:5554")
+            except Exception as e:
+                print(e)
 
             try:
                 if(exists("C:\OpenRMM\Agent\OpenRMM.json")):
@@ -234,6 +241,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         # Creating Threads
         if(self.MQTT_flag_connected == 1):
             self.log("Start", "Threads: Starting")
+
+            self.thread_agent_ui = threading.Thread(target=self.agent_ui, args=[]).start()
+
             self.thread_heartbeat = threading.Thread(target=self.start_thread, args=["get_heartbeat", True]).start()
             self.thread_agent_log = threading.Thread(target=self.start_thread, args=["get_agent_log", True]).start()
             self.thread_general = threading.Thread(target=self.start_thread, args=["get_general", True]).start()
@@ -268,7 +278,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.thread_event_logs_application = threading.Thread(target=self.start_thread, args=["get_event_log_application", True]).start()
             self.thread_event_logs_security = threading.Thread(target=self.start_thread, args=["get_event_log_security", True]).start()
             self.thread_event_logs_setup = threading.Thread(target=self.start_thread, args=["get_event_log_setup", True]).start()
-            self.thread_screenshot = threading.Thread(target=self.start_thread, args=["get_screenshot", True]).start()
             
             # Send these only once on startup, unless an interval is defined by the front end
             self.thread_registry = threading.Thread(target=self.start_thread, args=["get_registry", True]).start()
@@ -327,15 +336,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     self.log("Thread", functionName[4:] + ": Getting New Data")
                     New = eval("self." + functionName + "(wmi, payload)")
                     
-                    if(functionName[4:] == "screenshot"):
-                        encMessage = self.Fernet.encrypt(New)
-                        self.Cache[functionName[4:]] = New
-                    else:
-                        result = diff({}, New)
-                        self.Cache[functionName[4:]] = New
-                        data["Request"] = payload # Pass request payload to response
-                        data["Response"] = list(result)
-                        encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+                    result = diff({}, New)
+                    self.Cache[functionName[4:]] = New
+                    data["Request"] = payload # Pass request payload to response
+                    data["Response"] = list(result)
+                    encMessage = self.Fernet.encrypt(json.dumps(data).encode())
                     self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
                 
                     # Loop for periodic updates
@@ -347,17 +352,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                             # Get and send Data
                             New = eval("self." + functionName + "(wmi, payload)")
                             if(New != self.Cache[functionName[4:]]): # Only send data if diffrent.
-                                self.log("Thread Loop", functionName[4:] + ": Sending New Data")
-                                
-                                if(functionName[4:] == "screenshot"):
-                                    encMessage = self.Fernet.encrypt(New)
-                                    self.Cache[functionName[4:]] = New
-                                else:
-                                    result = diff(self.Cache[functionName[4:]], New)
-                                    self.Cache[functionName[4:]] = New
-                                    data["Request"] = ""
-                                    data["Response"] = list(result)
-                                    encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+                                self.log("Thread Loop", functionName[4:] + ": Sending New Data")                         
+
+                                result = diff(self.Cache[functionName[4:]], New)
+                                self.Cache[functionName[4:]] = New
+                                data["Request"] = ""
+                                data["Response"] = list(result)
+                                encMessage = self.Fernet.encrypt(json.dumps(data).encode())
                                 self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
   
                 else: # This section is ran when asked to get data via a command
@@ -373,15 +374,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         New = eval("self." + functionName + "(wmi, payload)")
                         self.log("Thread", functionName[4:] + ": Sending New Data")                    
 
-                        if(functionName[4:] == "screenshot"):
-                            encMessage = self.Fernet.encrypt(New)
-                            self.Cache[functionName[4:]] = New
-                        else:
-                            result = diff(self.Cache[functionName[4:]], New)
-                            self.Cache[functionName[4:]] = New
-                            data["Request"] = payload # Pass request payload to response
-                            data["Response"] = list(result)
-                            encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+                        result = diff(self.Cache[functionName[4:]], New)
+                        self.Cache[functionName[4:]] = New
+                        data["Request"] = payload # Pass request payload to response
+                        data["Response"] = list(result)
+                        encMessage = self.Fernet.encrypt(json.dumps(data).encode())
                         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
                     else: # Rate Limit Reached!
                         self.log("Thread", functionName[4:] + ": RATE LIMIT")
@@ -461,6 +458,29 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(DEBUG): print(traceback.format_exc())
             self.log("auto_update", e, "Error")   
 
+    # Process Agent UI System Tray Icon Messages
+    def agent_ui(self):
+        # Run the server
+        while True:
+            try:
+                data = self.socket.recv()
+                if(data):
+                    data = json.loads(data)
+                    if(data["type"] == "screenshot"):
+                        monitor = str(data["monitor_number"])
+                        data["Request"] = {}
+                        data["Response"] = data['value']
+                        encMessage = self.Fernet.encrypt(json.dumps(data).encode())
+                        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/screenshot_" + monitor + " /Update", encMessage, qos=1)
+
+                        res = "Recvd"
+                        self.socket.send(res.encode('utf-8'))
+            except Exception as e:
+                exception_type, exception_object, exception_traceback = sys.exc_info()
+                line_number = exception_traceback.tb_lineno
+                if(DEBUG): print(traceback.format_exc())
+                self.log("Agent_UI "+ str(line_number), e, "Error")
+
 ############## ACT ##############
     # Manual Update the Agent
     def act_update_agent(self, wmi=None, payload=None):
@@ -519,18 +539,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("set_alert", e, "Error")
-
-    # Send Keys
-    def set_keyboard(self, wmi, payload=None):
-        try:
-            if("data" in payload):
-                time.sleep(0.5)
-                pyautogui.FAILSAFE = True
-                pyautogui.write(payload["data"])
-                self.log("setKeyboard", "Sending Keyboard Keys")
-        except Exception as e:
-            if(DEBUG): print(traceback.format_exc())
-            self.log("set_keyboard", e, "Error")
 
 ############## GET ##############
     # Heartbeat
@@ -1233,38 +1241,38 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Get Screenshot
     def get_screenshot(self, wmi, payload=None):
-        try:
-            with mss.mss() as sct:
-                # Get rid of the first, as it represents the "All in One" monitor:
-                for num, monitor in enumerate(sct.monitors[1:], 1):
-                    # Get raw pixels from the screen
-                    sct_img = sct.grab(monitor)
-                    # Create the Image
-                    screenshot = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                    screenshot = screenshot.resize((800,800), PIL.Image.ANTIALIAS)
+            try:
+                if(exists("C:\OpenRMM\Agent\monitor-1.png")): 
+                    f = open("C:\OpenRMM\Agent\monitor-1.png", "r")
+                    return f.read()
+            except Exception as e:
+                print(e)
 
-                    with io.BytesIO() as output:          
-                        screenshot.save(output, format='JPEG')
-                        return output.getvalue()
-        except Exception as e:
-            if(DEBUG): print(traceback.format_exc())
-            self.log("screenshot", e, "Error")
 
     # Get Okla Speedtest
     def get_okla_speedtest(self, wmi, payload=None):
         try:
             data = {}
-            command = "C:\OpenRMM\Agent\speedtest.exe --accept-license -f json"
+            command = "C:\OpenRMM\Agent\EXE\speedtest.exe --accept-license -f json"
             data["0"] = json.loads(str(subprocess.check_output(command, shell=True), "utf-8"))
             return data
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("okla_speedtest", e, "Error")
 
-    # Get Registry
+    # Get Registry: https://github.com/williballenthin/python-registry
     def get_registry(self, wmi, payload=None):
         subRegistry = {}
         try:
+            #reg = Registry.Registry(sys.argv[1])
+            #from Registry import Registry
+            #def rec(key, depth=0):
+                #print("\t" * depth + key.path())
+
+                #for subkey in key.subkeys():
+                    #rec(subkey, depth + 1)
+
+            #rec(reg.root())     
             return subRegistry
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
