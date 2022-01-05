@@ -15,7 +15,6 @@ from win32com.client import GetObject
 import servicemanager
 import pkg_resources
 import urllib.request
-import scandir
 from random import randint
 import traceback
 import socket
@@ -23,15 +22,15 @@ import datetime
 import rsa
 from cryptography.fernet import Fernet
 from dictdiffer import diff, patch, swap, revert
-import mss
 import zmq
+import platform
 
 ################################# SETUP ##################################
 Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.1.5"
+Agent_Version = "2.1.6"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
@@ -82,18 +81,19 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.Cache = {}
             self.lastRan = {}
             self.AgentLog = []
+            self.agent_ui_socket_queue = []
             self.ignoreRateLimit = ["get_filesystem", "get_event_logs", "get_agent_settings", "set_agent_settings"]
             self.isrunning = True
             self.go = False # Prevent function go() running more than once
             self.session_id = str(randint(1000000000000000, 1000000000000000000))
             self.MQTT_flag_connected = 0
-            self.rateLimit = 120
+            self.rateLimit = 2 #120
             self.log("Setup", "Agent Starting") 
 
             try:
                 print("Starting Socket server on port 5554")
                 self.context = zmq.Context()
-                self.socket = self.context.socket(zmq.REP)
+                self.socket = self.context.socket(zmq.PAIR)
                 self.socket.bind("tcp://*:5554")
             except Exception as e:
                 print(e)
@@ -282,10 +282,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             # Send these only once on startup, unless an interval is defined by the front end
             self.thread_registry = threading.Thread(target=self.start_thread, args=["get_registry", True]).start()
             self.thread_windows_activation = threading.Thread(target=self.start_thread, args=["get_windows_activation", True]).start()
-            self.thread_agent_log = threading.Thread(target=self.start_thread, args=["get_agent_log", True]).start()
             self.thread_agent_settings = threading.Thread(target=self.start_thread, args=["get_agent_settings", True]).start()
             self.thread_auto_update = threading.Thread(target=self.auto_update, args=[]).start()
             self.thread_okla_speedtest = threading.Thread(target=self.start_thread, args=["get_okla_speedtest", True]).start()
+            self.thread_screenshot = threading.Thread(target=self.screenshot_loop, args=[]).start()
 
             self.log("Start", "Threads: Started")
         else:
@@ -346,7 +346,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     # Loop for periodic updates
                     while functionName[4:] in self.AgentSettings['Configurable']['Interval']:
                         time.sleep(1)
-                        loopCount = loopCount + 1
+                        loopCount += 1
                         if (loopCount == (60 * self.AgentSettings['Configurable']['Interval'][functionName[4:]]) and self.AgentSettings['Configurable']['Interval'][functionName[4:]] != "0"): # Every x minutes
                             loopCount = 0
                             # Get and send Data
@@ -442,7 +442,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Auto Update the Agent
     def auto_update(self):
-
         try:
             if("Configurable" in self.AgentSettings):
                 if("Updates" in self.AgentSettings['Configurable']):
@@ -450,7 +449,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     loopCount = 0
                     while self.AgentSettings['Configurable']['Updates']["auto_update"] == 1:
                         time.sleep(1)
-                        loopCount = loopCount + 1
+                        loopCount += 1
                         if (loopCount == (60 * self.AgentSettings['Configurable']['Updates']["check_interval"])): # Every x minutes
                             loopCount = 0
                             self.act_update_agent()
@@ -460,21 +459,14 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Process Agent UI System Tray Icon Messages
     def agent_ui(self):
-        # Run the server
+        self.agent_ui_socket_queue = []
         while True:
             try:
                 data = self.socket.recv()
                 if(data):
                     data = json.loads(data)
-                    if(data["type"] == "screenshot"):
-                        monitor = str(data["monitor_number"])
-                        data["Request"] = {}
-                        data["Response"] = data['value']
-                        encMessage = self.Fernet.encrypt(json.dumps(data).encode())
-                        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/screenshot_" + monitor + " /Update", encMessage, qos=1)
-
-                        res = "Recvd"
-                        self.socket.send(res.encode('utf-8'))
+                    if(data["source"] == "ui"):
+                        self.agent_ui_socket_queue.append(data)
             except Exception as e:
                 exception_type, exception_object, exception_traceback = sys.exc_info()
                 line_number = exception_traceback.tb_lineno
@@ -529,13 +521,9 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # Show Alert
     def set_alert(self, wmi, payload=None):
         try:
-            response = ""
             if("data" in payload and "Type" in payload["data"] and "Message" in payload["data"] and "Title" in payload["data"]):
-                if(payload["data"]["Type"] == "alert"): response = pyautogui.alert(payload["data"]["Message"], payload["data"]["Title"], 'Okay')
-                if(payload["data"]["Type"] == "confirm"): response = pyautogui.confirm(payload["data"]["Message"], payload["data"]["Title"], ['Yes', 'No'])
-                if(payload["data"]["Type"] == "prompt"): response = pyautogui.prompt(payload["data"]["Message"], payload["data"]["Title"], '')
-                if(payload["data"]["Type"] == "password"): response = pyautogui.password(payload["data"]["Message"], payload["data"]["Title"], '', mask='*')
-            return response          
+                send = {"source":"service", "type":"alert", "value": payload["data"]}
+                self.socket.send_unicode(json.dumps(send))
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("set_alert", e, "Error")
@@ -545,6 +533,34 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def get_heartbeat(self, wmi, payload=None):
         return time.time()
 
+    # Screenshot
+    def get_screenshot(self):
+        current_list = self.agent_ui_socket_queue
+        send = {"source":"service", "type":"screenshot", "value": ""}
+        self.socket.send_unicode(json.dumps(send))
+        # Wait for respone from socket
+        time.sleep(5)
+        i = 0
+        while i < len(self.agent_ui_socket_queue):
+            item = self.agent_ui_socket_queue[i]
+            if(item["type"] == "screenshot"):
+                self.agent_ui_socket_queue.remove(self.agent_ui_socket_queue[i])
+                monitor = str(item["monitor_number"])
+                image = item["value"].encode("ISO-8859-1")
+                encMessage = self.Fernet.encrypt(image)
+                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/screenshot_" + monitor + "/Update", encMessage, qos=1)
+            i += 1
+
+    def screenshot_loop(self):
+        loopCount = 0
+        self.get_screenshot()
+        while True:     
+            time.sleep(10)
+            loopCount += 1
+            if (loopCount == (6 * self.AgentSettings['Configurable']['Interval']['screenshot']) and self.AgentSettings['Configurable']['Interval']['screenshot'] != "0"): # Every x minutes
+                loopCount = 0
+                self.get_screenshot()
+                
     # Agent Log
     def get_agent_log(self, wmi, payload=None):
         try:
@@ -556,7 +572,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             for log in self.AgentLog:
                 d2 = datetime.datetime.strptime(log["Time"], "%Y-%m-%d %H:%M:%S.%f")
                 if((d1 - d2).days > logRetention):
-                    count = count +1
+                    count += 1
                 else:
                     logs.append(log)
             if(count > 0):
@@ -565,6 +581,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             return self.AgentLog
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
+            self.log("agent_log", e, "Error")
         
     # Get Windows Update
     def get_windows_updates(self, wmi, payload=None):
@@ -647,7 +664,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 subGeneral["NumberOfProcesses"] = s.NumberOfProcesses
                 subGeneral["InstallDate"] = s.InstallDate
                 subGeneral["Description"] = s.Description
-                subGeneral["BuildNumber"] = s.BuildNumber
+                subGeneral["BuildNumber"] = subprocess.check_output('ver', shell=True).decode("utf-8")
                 
             for s in wmi.Win32_ComputerSystem(["manufacturer", "model", "systemtype", "totalphysicalmemory", "Domain", "HypervisorPresent", "NumberOfLogicalProcessors", "NumberOfProcessors", "Workgroup", "UserName"]):
                 subGeneral["Manufacturer"] = s.manufacturer
@@ -727,9 +744,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         try:
             wmi = wmi.WMI()
             data = {}
-            for s in wmi.Win32_OptionalFeature(["Caption", "Description", "InstallDate", "Status", "Name", "InstallState"]):
+            for s in wmi.Win32_OptionalFeature(["Caption", "InstallDate", "Status", "Name", "InstallState"]):
                 subOptionalFeatures = {}
-                subOptionalFeatures["Description"] = s.Description
                 subOptionalFeatures["InstallDate"] = s.InstallDate
                 subOptionalFeatures["Status"] = s.Status
                 subOptionalFeatures["Name"] = s.Name
@@ -1124,7 +1140,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             count = -1
             data = {}
             for s in wmi.Win32_Processor(["Caption", "CpuStatus", "CurrentClockSpeed", "CurrentVoltage", "Description", "DeviceID", "Manufacturer", "MaxClockSpeed", "Name", "NumberOfCores", "NumberOfLogicalProcessors", "SerialNumber", "ThreadCount", "Version", "LoadPercentage"]):
-                count = count +1
+                count += 1
                 subProcessor = {}
                 subProcessor["Caption"] = s.Caption
                 subProcessor["CpuStatus"] = s.CpuStatus
@@ -1169,6 +1185,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             subAgent = {}
             subAgent["Name"] = Service_Name
             subAgent["Version"] = Agent_Version
+            subAgent["Python_Version"] = platform.python_version()
             subAgent["Path"] = os.path.dirname(os.path.abspath(__file__))
             data["0"] = subAgent
             return data
@@ -1239,16 +1256,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(DEBUG): print(traceback.format_exc())
             self.log("filesystem", e, "Error")
 
-    # Get Screenshot
-    def get_screenshot(self, wmi, payload=None):
-            try:
-                if(exists("C:\OpenRMM\Agent\monitor-1.png")): 
-                    f = open("C:\OpenRMM\Agent\monitor-1.png", "r")
-                    return f.read()
-            except Exception as e:
-                print(e)
-
-
     # Get Okla Speedtest
     def get_okla_speedtest(self, wmi, payload=None):
         try:
@@ -1286,7 +1293,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             count = -1
             data = {}
             for s in wmi.Win32_Share():
-                count = count +1
+                count += 1
                 subSharedDrives = {}
                 subSharedDrives["Name"] = s.Name
                 subSharedDrives["Path"] = s.Path
@@ -1313,7 +1320,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     count = 0
                     data = {}
                     for event in events:
-                        count = count +1
+                        count += 1
                         data[str(count)] = event
                         if(count == 100): break
                     return data
@@ -1370,7 +1377,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     
     # Run Code in CMD
     def CMD(self, payload):
-        try:
+        try:        
             payload = json.loads(payload)
             if("data" in payload):
                 command = payload["data"]

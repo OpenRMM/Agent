@@ -42,7 +42,7 @@ def screenshot():
                 sct_img = sct.grab(monitor)
                 # Create the Image
                 screenshot = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                screenshot = screenshot.resize((600, 337), PIL.Image.ANTIALIAS) #16:9 ratio
+                screenshot = screenshot.resize((800, 450), PIL.Image.ANTIALIAS) #16:9 ratio
 
                 with io.BytesIO() as output:          
                     screenshot.save(output, format='JPEG')
