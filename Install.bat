@@ -46,4 +46,7 @@ cd Py
 echo Installing OpenRMM Agent
 py OpenRMM.py --startup auto install
 py OpenRMM.py start
+
+echo Installing Git
+winget install --id Git.Git -e --source winget
 pause

@@ -436,7 +436,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         Interval["okla_speedtest"] = 0
 
         Updates["auto_update"] = 0
-        Updates["update_url"] = "https://raw.githubusercontent.com/OpenRMM/Agent/main/Source/OpenRMM.py"
+        Updates["update_url"] = "https://github.com/OpenRMM/Agent.git"
         Updates["check_interval"] = 1440
         
         self.AgentSettings['Configurable'] = {'Interval': Interval, "Updates": Updates}
@@ -481,11 +481,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if("Configurable" in self.AgentSettings):
                 if("Updates" in self.AgentSettings['Configurable']):
                     update_url = self.AgentSettings['Configurable']['Updates']['update_url']
-
+                    self.log("Update Agent", "Update Requested: " + update_url) 
+                    
                     # Check if update_url is online and reachable
                     response_code = urllib.request.urlopen(update_url).getcode()
                     if(response_code == 200):
-                        self.log("Update Agent", "Update Requested: " + update_url)  
+                        self.log("Update Agent", "Update Started: " + update_url)  
                         proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat " + update_url, shell=True)
                         self.SvcStop()
                     else:
