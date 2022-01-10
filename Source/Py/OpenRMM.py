@@ -30,14 +30,14 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.1.6"
+Agent_Version = "2.1.7"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
 
 ###########################################################################
 
-required = {'paho-mqtt', 'pywin32', 'wmi', 'pillow', 'scandir', 'cryptography', 'rsa', 'dictdiffer' , 'mss', 'pyzmq'}
+required = {'paho-mqtt', 'pywin32', 'wmi', 'cryptography', 'rsa', 'dictdiffer', 'pyzmq'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 
@@ -302,9 +302,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             logEvent["Time"] = str(datetime.datetime.now())
             self.AgentLog.append(logEvent)
             
-            f = open(LOG_File, "a")
-            f.write(str(datetime.datetime.now()) + " " + errorType + " - " + "Title: " + title + ", Message: " + str(message) + "\n")
-            f.close()
+            if(errorType != "Info"): # Only errors & warning are written to log file
+                f = open(LOG_File, "a")
+                f.write(str(datetime.datetime.now()) + " " + errorType + " - " + "Title: " + title + ", Message: " + str(message) + "\n")
+                f.close()
         except Exception as e:
             print("Error saving to log file")
             print(e)

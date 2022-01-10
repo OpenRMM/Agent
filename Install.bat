@@ -26,7 +26,7 @@ if '%errorlevel%' NEQ '0' (
 Xcopy /E /I /Y Source C:\OpenRMM\Agent
 CD C:\OpenRMM\Agent\EXE
 echo Installing Python 3.9.7
-::python-3.9.7.exe /quiet InstallAllUsers=1 PrependPath=1 TargetDir=C:\Python\ DefaultAllUsersTargetDir=C:\Python\ Include_test=0
+python-3.10.1-amd64 /quiet InstallAllUsers=1 PrependPath=1 TargetDir=C:\Python\ DefaultAllUsersTargetDir=C:\Python\ Include_test=0
 cd ..
 echo Installing Required Modules
 py -m pip install paho-mqtt
@@ -46,3 +46,4 @@ cd Py
 echo Installing OpenRMM Agent
 py OpenRMM.py --startup auto install
 py OpenRMM.py start
+pause
