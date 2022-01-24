@@ -47,8 +47,10 @@ class WindowsBalloonTip:
         # self.show_balloon(title, msg)
         time.sleep(10)
         DestroyWindow(self.hwnd)
+
     def OnClick(self, hwnd, msg, wparam, lparam):
         webbrowser.open("https://dev.openrmm.io/", new=0, autoraise=True)
+
     def OnDestroy(self, hwnd, msg, wparam, lparam):
         nid = (self.hwnd, 0)
         Shell_NotifyIcon(NIM_DELETE, nid)
@@ -81,9 +83,8 @@ def button_manage_agent(systray):
     AgentSettings = read_config_file()
     webbrowser.open("https://dev.openrmm.io/", new=0, autoraise=True)
 
-def screenshot():
+def screenshot(systray=None):
     try:
-        print("Getting Screenshot")
         with mss.mss() as sct:
             # Get rid of the first, as it represents the "All in One" monitor:
             for num, monitor in enumerate(sct.monitors[1:], 1):
@@ -101,13 +102,16 @@ def screenshot():
         print(e)
 
 def alert(payload):
-    response = ""
-    if(payload["Type"] == "alert"): response = pyautogui.alert(payload["Message"], payload["Title"], 'Okay')
-    if(payload["Type"] == "confirm"): response = pyautogui.confirm(payload["Message"], payload["Title"], ['Yes', 'No'])
-    if(payload["Type"] == "prompt"): response = pyautogui.prompt(payload["Message"], payload["Title"], '')
-    if(payload["Type"] == "password"): response = pyautogui.password(payload["Message"], payload["Title"], '', mask='*')
-    send = {"source":"ui", "type":"alert", "value": ""}
-    socket.send_unicode(json.dumps(send))
+    try:
+        response = ""
+        if(payload["Type"] == "alert"): response = pyautogui.alert(payload["Message"], payload["Title"], 'Okay')
+        if(payload["Type"] == "confirm"): response = pyautogui.confirm(payload["Message"], payload["Title"], ['Yes', 'No'])
+        if(payload["Type"] == "prompt"): response = pyautogui.prompt(payload["Message"], payload["Title"], '')
+        if(payload["Type"] == "password"): response = pyautogui.password(payload["Message"], payload["Title"], '', mask='*')
+        send = {"source":"ui", "type":"alert", "value": ""}
+        socket.send_unicode(json.dumps(send))
+    except Exception as e:
+        print(e)
     
 def read_config_file():
     try:
@@ -127,6 +131,7 @@ def socket_recieve():
             data = socket.recv()
             if(data):
                 data = json.loads(data)
+                print("Getting " + data["type"] + " requested by: " + data['source'])
                 if(data["source"] == "service"):
                     if(data["type"] == "screenshot"): screenshot()
                     if(data["type"] == "alert"): alert(data["value"])  
@@ -140,8 +145,4 @@ systray = SysTrayIcon("../icon.ico", "OpenRMM Agent", menu_options)
 systray.start()
 
 
-
 w= balloon_tip("OpenRMM Agent", "Agent Started")
-
-
-
