@@ -30,14 +30,14 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.1.7"
+Agent_Version = "2.1.8"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
 
 ###########################################################################
 
-required = {'paho-mqtt', 'pywin32', 'wmi', 'cryptography', 'rsa', 'dictdiffer', 'pyzmq'}
+required = {'paho-mqtt', 'pywin32', 'wmi', 'cryptography', 'rsa', 'dictdiffer', 'pyzmq', 'pillow', 'mss', 'infi.systray', 'pyautogui'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 
@@ -292,19 +292,19 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("Start", "MQTT is not connected", "Warn")   
 
     # Log, Type: Info, Warn, Error
-    def log(self, title, message, errorType="Info"):
-        print(errorType + " - " + "Title: " + title + ", Message: " + str(message))
+    def log(self, title, message, errorType="Info"):      
         try:
             logEvent = {}
             logEvent["Title"] = title 
             logEvent["Message"] = str(message)
             logEvent["Type"] = errorType
-            logEvent["Time"] = str(datetime.datetime.now())
+            logEvent["Time"] = str(datetime.datetime.now().strftime("%m-%d-%y %I:%M:%S %p"))
             self.AgentLog.append(logEvent)
+            print(logEvent["Time"]+ ": " + logEvent["Type"] + " - " + "Title: " + logEvent["Title"] + ", Message: " + logEvent["Message"])
             
             if(errorType != "Info"): # Only errors & warning are written to log file
                 f = open(LOG_File, "a")
-                f.write(str(datetime.datetime.now()) + " " + errorType + " - " + "Title: " + title + ", Message: " + str(message) + "\n")
+                f.write(logEvent["Time"] + " " + logEvent["Type"] + " - " + "Title: " + logEvent["Title"] + ", Message: " + logEvent["Message"] + "\n")
                 f.close()
         except Exception as e:
             print("Error saving to log file")
@@ -467,6 +467,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(data):
                     data = json.loads(data)
                     if(data["source"] == "ui"):
+                        print("Item added to socket queue")
                         self.agent_ui_socket_queue.append(data)
             except Exception as e:
                 exception_type, exception_object, exception_traceback = sys.exc_info()
@@ -481,12 +482,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if("Configurable" in self.AgentSettings):
                 if("Updates" in self.AgentSettings['Configurable']):
                     update_url = self.AgentSettings['Configurable']['Updates']['update_url']
-                    self.log("Update Agent", "Update Requested: " + update_url) 
-                    
+
                     # Check if update_url is online and reachable
                     response_code = urllib.request.urlopen(update_url).getcode()
                     if(response_code == 200):
-                        self.log("Update Agent", "Update Started: " + update_url)  
+                        self.log("Update Agent", "Update Requested: " + update_url)  
                         proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat " + update_url, shell=True)
                         self.SvcStop()
                     else:
@@ -537,7 +537,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
     # Screenshot
     def get_screenshot(self):
-        current_list = self.agent_ui_socket_queue
+        print("Getting Screenshot")
         send = {"source":"service", "type":"screenshot", "value": ""}
         self.socket.send_unicode(json.dumps(send))
         # Wait for respone from socket

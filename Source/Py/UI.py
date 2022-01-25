@@ -10,7 +10,7 @@ from os.path import exists
 import json
 import time
 import pyautogui
-
+import datetime
 from win32api import *
 from win32gui import *
 import win32gui 
@@ -94,7 +94,7 @@ def screenshot(systray=None):
                 screenshot = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
                 screenshot = screenshot.resize((800, 450), PIL.Image.ANTIALIAS) #16:9 ratio
 
-                with io.BytesIO() as output:          
+                with io.BytesIO() as output:
                     screenshot.save(output, format='JPEG')
                     send = {"source":"ui", "type":"screenshot", "monitor_number":str(num), "value":output.getvalue().decode("ISO-8859-1")}
                 socket.send_unicode(json.dumps(send))
@@ -131,7 +131,8 @@ def socket_recieve():
             data = socket.recv()
             if(data):
                 data = json.loads(data)
-                print("Getting " + data["type"] + " requested by: " + data['source'])
+                time = str(datetime.datetime.now().strftime("%m-%d-%y %I:%M:%S %p"))
+                print(time + ": Getting " + data["type"] + " requested by: " + data['source'])
                 if(data["source"] == "service"):
                     if(data["type"] == "screenshot"): screenshot()
                     if(data["type"] == "alert"): alert(data["value"])  
@@ -145,4 +146,4 @@ systray = SysTrayIcon("../icon.ico", "OpenRMM Agent", menu_options)
 systray.start()
 
 
-w= balloon_tip("OpenRMM Agent", "Agent Started")
+w = balloon_tip("OpenRMM Agent", "Agent Started")
