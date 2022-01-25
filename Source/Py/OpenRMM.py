@@ -30,7 +30,7 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.1.8" 
+Agent_Version = "2.1.9" 
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
@@ -188,8 +188,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if(command[1] == "Commands"):
                     # Command Prompt
                     if(command[2] == "CMD"):
+                        self.log("Commands", "Running Command: " + str(message.payload))
                         encMessage = self.Fernet.encrypt(json.dumps(self.CMD(message.payload)).encode())
+                        self.log("Commands", "Sending Response to Server.")
                         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/CMD", encMessage, qos=1)
+                        self.log("Commands", "Response Successfully Sent to Server.")
                     # Other Commands
                     elif(command[2][0:4] == "get_" or command[2][0:4] == "set_" or command[2][0:4] == "act_"): 
                         threading.Thread(target=self.start_thread, args=[command[2], False, message.payload.decode('utf-8')]).start()
