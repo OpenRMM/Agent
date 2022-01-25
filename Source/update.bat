@@ -7,7 +7,7 @@ IF "%1"=="" (
 )
 CD C:\OpenRMM\
 "C:\Program Files\Git\bin\git" clone %update_url% temp
-robocopy /XO temp\source\ Agent\
+robocopy temp\source\ Agent\
 
 CD C:\OpenRMM\Agent\Py
 py OpenRMM.py update
