@@ -1,3 +1,2 @@
 cd ../Py
-py UI.py
-pause
+start pyw UI.py

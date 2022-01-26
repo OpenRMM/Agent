@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+# Create desktop shortcut to asset portal 
+# Implment a basic network scanner
+
+
 import os
 from os.path import exists
 import wmi
@@ -209,7 +213,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def on_message_commands(self, client, userdata, message):
         try:
             command = message.topic.split("/")
-            if(command[2][0:4] == "get_" or command[2][0:4] == "set_" or command[2][0:4] == "act_"): 
+            if(command[2][0:4] == "get_" or command[2][0:4] == "set_" or command[2][0:4] == "act_"):
+                self.log("Command", "The font-end is asking for new data: " + str(command[2]))
                 threading.Thread(target=self.start_thread, args=[command[2], False, message.payload.decode('utf-8')]).start()
         except Exception as e:
             self.log("Commands", e, "Error")
@@ -552,7 +557,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 ############## GET ##############
 
     # Screenshot
-    def get_screenshot(self):
+    def get_screenshot(self, wmi=None, payload=None):
         print("Getting Screenshot")
         send = {"source":"service", "type":"screenshot", "value": ""}
         self.socket.send_unicode(json.dumps(send))
@@ -566,7 +571,8 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 monitor = str(item["monitor_number"])
                 image = item["value"].encode("ISO-8859-1")
                 encMessage = self.Fernet.encrypt(image)
-                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/screenshot_" + monitor + "/Update", encMessage, qos=1)
+                print("Sending Screenshot for monitor #: " + monitor)
+                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Data/screenshot_" + monitor + "/Update", encMessage, qos=1)
             i += 1
 
     def screenshot_loop(self):
