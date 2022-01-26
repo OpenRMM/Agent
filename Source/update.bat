@@ -8,7 +8,7 @@ IF "%1"=="" (
 CD C:\OpenRMM\
 "C:\Program Files\Git\bin\git" clone %update_url% temp
 robocopy /IS /E /MOVE /IM "temp\source\" "Agent\"
-
+timeout 5
 CD C:\OpenRMM\Agent\Py
 py OpenRMM.py update
 py OpenRMM.py restart
