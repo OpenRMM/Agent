@@ -30,7 +30,7 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.1.9" 
+Agent_Version = "2.2.0"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
@@ -72,6 +72,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             print("        |_|                                    ")
             print("Github: https://github.com/OpenRMM/")
             print("Created By: Brad & Brandon Sanders")
+            print("Agent Version: " + Agent_Version)
             print("")
             os.system('color B')
             time.sleep(0.5)  
@@ -88,6 +89,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.session_id = str(randint(1000000000000000, 1000000000000000000))
             self.MQTT_flag_connected = 0
             self.rateLimit = 2 #120
+            self.Public_Key = None
             self.log("Setup", "Agent Starting") 
 
             try:
@@ -111,15 +113,24 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 sys.stop()
 
             try:
+                topics = [
+                    ("OpenRMM/Configuration/#", 1),
+                    ("OpenRMM/Events/#", 1), # This is used notify agents when sever goes online/offline
+                    (self.session_id + "/#", 1), # This is used to setup the agent on first install
+                ]
+
                 self.log("Setup", "Starting MQTT")
                 self.mqtt = mqtt.Client(client_id=self.session_id, clean_session=True)
                 self.mqtt.username_pw_set(self.AgentSettings["MQTT"]["Username"], self.AgentSettings["MQTT"]["Password"])
-                self.mqtt.will_set(self.session_id + "/Status", "0", qos=1, retain=True)
                 self.mqtt.connect(self.AgentSettings["MQTT"]["Server"], port=self.AgentSettings["MQTT"]["Port"])
-                self.mqtt.subscribe(self.session_id + "/Commands/#", qos=1)
-                self.mqtt.on_message = self.on_message
+                self.mqtt.subscribe(topics)
                 self.mqtt.on_connect = self.on_connect
                 self.mqtt.on_disconnect = self.on_disconnect
+
+                # This is used to grap RSA key on change & startup
+                self.mqtt.message_callback_add("OpenRMM/Configuration/Encryption/RSA/Keys/Public", self.on_message_RSAPublic)
+                # Only used once when the agent is first installing
+                self.mqtt.message_callback_add(self.session_id + "/Commands/New", self.on_message_new)
                 self.mqtt.loop_start()
             except Exception as e:
                 self.log("MQTT Setup", e, "Error")
@@ -143,100 +154,107 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     def on_connect(self, client, userdata, flags, rc):
         self.MQTT_flag_connected = 1
         self.log("MQTT", "Connected to server: " + self.AgentSettings["MQTT"]["Server"] + " with result code " + str(rc))
-        if("Setup" not in self.AgentSettings):
-            self.log("MQTT", "Sending New Agent command to server")
-            self.mqtt.publish(self.session_id + "/Agent/New", "true", qos=1, retain=False)
-        else:
-            self.getReady()
 
+        # Changing status to Online
+        if("Setup" in self.AgentSettings):
+            if("ID" in self.AgentSettings["Setup"]):
+                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Status", "1", qos=1, retain=True)
+   
+    # When MQTT is disconnected
     def on_disconnect(self, xclient, userdata, rc):
         self.MQTT_flag_connected = 0
         self.log("MQTT", "Unexpected disconnection", "Warn")
 
-    def on_message(self, client, userdata, message):
-        print("MQTT: Received message '" + str(message.payload) + "' on topic '" + message.topic + "' with QoS " + str(message.qos))
+    # Server has updated the RSA Key, lets update it on our end.
+    def on_message_RSAPublic(self, client, userdata, message):
+        if(len(str(message.payload, 'utf-8')) > 0):
+            self.log("MQTT", "Got Public Key From server")
+            temp = rsa.PublicKey.load_pkcs1(str(message.payload, 'utf-8'))
+            if(temp != self.Public_Key):
+                self.Public_Key = rsa.PublicKey.load_pkcs1(str(message.payload, 'utf-8'))
 
-        # Ready is sent on agent start, first step in connection is public key exchange
-        if (str(message.topic) == self.session_id + "/Commands/New"):
+                if("Setup" not in self.AgentSettings):
+                    self.log("MQTT", "Sending New Agent command to server")
+                    self.mqtt.publish(self.session_id + "/Agent/New", "true", qos=1, retain=False)
+                else:
+                    self.getReady()
+
+    # Ready is sent on agent start, first step in connection is public key exchange
+    def on_message_new(self, client, userdata, message):
+        if("Setup" not in self.AgentSettings):
             self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
             if("ID" in self.AgentSettings["Setup"]):
                 self.log("MQTT", "Got ID From server, Setting Up Agent with ID: " + str(self.AgentSettings["Setup"]["ID"]))
                 self.getReady()
-        
-        if(str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Ready"):
-            # This is were required data is recived from the server, this is ran everytime
-            self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
-            self.log("MQTT", "Setting Up Agent with ID: " + str(self.AgentSettings["Setup"]["ID"]))
-            self.save_agent_settings()
-            self.getSet()
 
+    def on_message_go(self, client, userdata, message):
+        ID = message.topic.split("/")[0]
+        self.AgentSettings["Setup"]['ID'] = ID
+        self.save_agent_settings()
+ 
         # Server has everything it needs for us to start
-        if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Go" and self.go == False):
-            self.go = True
-            self.Go()
+        self.Go()
 
-        # Sync message recieved from server, update keys
-        if (str(message.topic) == str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Sync"):
-            self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
-            self.getSet("Sync")
-
+    # Proccess Command Prompt
+    def on_message_cmd(self, client, userdata, message):
         # Make sure we have the base settings, ID, Salt then start listining to commands
         if("Setup" in self.AgentSettings):
             try:
-                # Process Commands
-                command = message.topic.split("/")
-                if(command[1] == "Commands"):
-                    # Command Prompt
-                    if(command[2] == "CMD"):
-                        self.log("Commands", "Running Command: " + str(message.payload))
-                        encMessage = self.Fernet.encrypt(json.dumps(self.CMD(message.payload)).encode())
-                        self.log("Commands", "Sending Response to Server.")
-                        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/CMD", encMessage, qos=1)
-                        self.log("Commands", "Response Successfully Sent to Server.")
-                    # Other Commands
-                    elif(command[2][0:4] == "get_" or command[2][0:4] == "set_" or command[2][0:4] == "act_"): 
-                        threading.Thread(target=self.start_thread, args=[command[2], False, message.payload.decode('utf-8')]).start()
-                self.command = {}
+                encMessage = self.Fernet.encrypt(json.dumps(self.CMD(message.payload)).encode())
+                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Data/CMD", encMessage, qos=1)
             except Exception as e:
-                self.log("Commands", e, "Error")
+                self.log("CMD", e, "Error")
 
+    # Proccess Other Commands      
+    def on_message_commands(self, client, userdata, message):
+        try:
+            command = message.topic.split("/")
+            if(command[2][0:4] == "get_" or command[2][0:4] == "set_" or command[2][0:4] == "act_"): 
+                threading.Thread(target=self.start_thread, args=[command[2], False, message.payload.decode('utf-8')]).start()
+        except Exception as e:
+            self.log("Commands", e, "Error")
+
+    # Gernerate salt and send it to the server,
     def getReady(self):
-        print("Sending session key to server, Agent Ready")
-
-        # Prep MQTT
-        self.mqtt.unsubscribe(self.session_id + "/Commands/#")
-        self.mqtt.subscribe(str(self.AgentSettings["Setup"]["ID"]) + "/Commands/#", qos=1)
-
-        # Send ready to server
-        payload = {"Session_ID":self.session_id}
-        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Ready", json.dumps(payload), qos=1, retain=False)
-
-    def getSet(self, setType="Startup"):
-        print("Server revieved session key, Sending agent encryption key to server, waiting for server to confirm")
-
-        self.Public_Key = rsa.PublicKey.load_pkcs1(self.AgentSettings["Setup"]["Public_Key"].encode('utf8'))
-
         # Generate Salt
         self.AgentSettings["Setup"]["salt"] = str(Fernet.generate_key(), "utf-8")
         self.Fernet = Fernet(self.AgentSettings["Setup"]["salt"])
 
-        # Send RSA encrypted key & session_id to the server
+        # Send RSA encrypted key to the server
         self.log("Encryption", "Sending salt to server")
-        RSAEncryptedSalt = rsa.encrypt(self.AgentSettings["Setup"]["salt"].encode(), self.Public_Key)
-        
-        if(setType == "Startup"):
-            self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Set", RSAEncryptedSalt, qos=1, retain=False)
-        elif(setType == "Sync"):
-            # The Agent session ID also need to sent here
-            self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Sync", RSAEncryptedSalt, qos=1, retain=False)
+        self.RSAEncryptedSalt = rsa.encrypt(self.AgentSettings["Setup"]["salt"].encode(), self.Public_Key)
+        self.mqtt.disconnect()
 
+        # Reconfigure MQTT to reset last will
+        topics = [
+            ("OpenRMM/Configuration/#", 1), # Holds config data like RSA public key
+            ("OpenRMM/Events/#", 1), # This is used notify agents when sever goes online/offline
+            (str(self.AgentSettings["Setup"]["ID"]) + "/#", 1), # This is used after the agent is setup, and forever after
+        ]
+
+        self.mqtt.will_set(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Status", "0", qos=1, retain=True)
+        self.mqtt.connect(self.AgentSettings["MQTT"]["Server"], port=self.AgentSettings["MQTT"]["Port"])
+        self.mqtt.subscribe(topics)
+        self.mqtt.on_connect = self.on_connect
+        self.mqtt.on_disconnect = self.on_disconnect
+
+        self.mqtt.message_callback_add(str(self.AgentSettings["Setup"]["ID"]) + "/Commands/Go", self.on_message_go)
+        self.mqtt.message_callback_add(str(self.AgentSettings["Setup"]["ID"]) + "/Commands/CMD", self.on_message_cmd)
+        self.mqtt.message_callback_add(str(self.AgentSettings["Setup"]["ID"]) + "/Commands/#", self.on_message_commands)
+
+        #self.mqtt.message_callback_add("OpenRMM/Configuration/Agent/Defaults", self.on_message_serverStatus)
+        #self.mqtt.message_callback_add("OpenRMM/Configuration/Company/1/Defaults", self.on_message_serverStatus)
+        #self.mqtt.message_callback_add("OpenRMM/Configuration/Agent/" + str(self.AgentSettings["Setup"]["ID"]) + "/Defaults", self.on_message_serverStatus)
+
+        # Send the server our unique encryption key
+        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Ready", self.RSAEncryptedSalt, qos=1, retain=False)
+
+    # The server has recieved our unique encryption key, lets start.
     def Go(self):
-        print("Server revieved encryption key, lets start")
+        if (self.go == True): return # Don't start again if started.
 
-        # Changing status to Online
-        self.mqtt.publish(self.session_id + "/Status", "1", qos=1, retain=True)
-
-        self.log("Start", "Recieved Go command from server. Agent Version: " + Agent_Version)
+        self.go = True
+        self.log("Start", "Server confirmed our encryption key, lets start")
 
         # Check if got agent settings here, if not load defaults
         if("Configurable" not in self.AgentSettings): self.agent_defaults()
@@ -247,7 +265,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
 
             self.thread_agent_ui = threading.Thread(target=self.agent_ui, args=[]).start()
 
-            self.thread_heartbeat = threading.Thread(target=self.start_thread, args=["get_heartbeat", True]).start()
             self.thread_agent_log = threading.Thread(target=self.start_thread, args=["get_agent_log", True]).start()
             self.thread_general = threading.Thread(target=self.start_thread, args=["get_general", True]).start()
             self.thread_bios = threading.Thread(target=self.start_thread, args=["get_bios", True]).start()
@@ -345,7 +362,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                     data["Request"] = payload # Pass request payload to response
                     data["Response"] = list(result)
                     encMessage = self.Fernet.encrypt(json.dumps(data).encode())
-                    self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
+                    self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
                 
                     # Loop for periodic updates
                     while functionName[4:] in self.AgentSettings['Configurable']['Interval']:
@@ -398,7 +415,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.log("Start", "Setting Agent Default Settings")
         Interval = {}
         Updates = {}
-        Interval["heartbeat"] = 1
         Interval["agent_log"] = 15
         Interval["general"] = 10
         Interval["bios"] = 30
@@ -534,9 +550,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("set_alert", e, "Error")
 
 ############## GET ##############
-    # Heartbeat
-    def get_heartbeat(self, wmi, payload=None):
-        return time.time()
 
     # Screenshot
     def get_screenshot(self):
@@ -569,21 +582,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
     # Agent Log
     def get_agent_log(self, wmi, payload=None):
         try:
-            # Run Cleanup
-            logRetention = 7
-            logs = []
-            count = 0
-            d1 = datetime.datetime.strptime(str(datetime.datetime.now()), "%Y-%m-%d %H:%M:%S.%f")
-            for log in self.AgentLog:
-                d2 = datetime.datetime.strptime(log["Time"], "%Y-%m-%d %H:%M:%S.%f")
-                if((d1 - d2).days > logRetention):
-                    count += 1
-                else:
-                    logs.append(log)
-            if(count > 0):
-                print("Removed " + str(count) + " log entrys, they were " + str((d1 - d2).days) + " days old.")
-            self.AgentLog = logs
-            return self.AgentLog
+            return self.AgentLog[-100:] # send last 100
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
             self.log("agent_log", e, "Error")
