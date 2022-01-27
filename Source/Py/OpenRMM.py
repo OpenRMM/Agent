@@ -3,7 +3,6 @@
 # Create desktop shortcut to asset portal 
 # Implment a basic network scanner
 
-
 import os
 from os.path import exists
 import wmi
@@ -40,7 +39,7 @@ LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
 
 ###########################################################################
-
+# Check if required modules are installed, if not prompt the user
 required = {'paho-mqtt', 'pywin32', 'wmi', 'cryptography', 'rsa', 'dictdiffer', 'pyzmq', 'pillow', 'mss', 'infi.systray', 'pyautogui'}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
@@ -64,6 +63,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
         self.isrunning = False
 
+
+    #################################################
+    # Function Name: SvcDoRun
+    # Purpose: Initial starting point for this service
+    # Example: None
+    #################################################
     def SvcDoRun(self):
         try:
             print("   ____                   _____  __  __ __  __ ")
@@ -75,7 +80,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             print("        | |                                    ")
             print("        |_|                                    ")
             print("Github: https://github.com/OpenRMM/")
-            print("Created By: Brad & Brandon Sanders")
+            print("Created By: Brad & Brandon Sanders, 2021-2022")
             print("Agent Version: " + Agent_Version)
             print("")
             os.system('color B')
@@ -96,6 +101,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.Public_Key = None
             self.log("Setup", "Agent Starting") 
 
+            # Connect to the Agent UI, running in taskbar
             try:
                 print("Starting Socket server on port 5554")
                 self.context = zmq.Context()
@@ -104,6 +110,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             except Exception as e:
                 print(e)
 
+            # Load the config file
             try:
                 if(exists("C:\OpenRMM\Agent\OpenRMM.json")):
                     self.log("Setup", "Getting data from C:\OpenRMM\Agent\OpenRMM.json")
@@ -149,12 +156,23 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except Exception as e:
             if(DEBUG): print(traceback.format_exc())
 
+
+    #################################################
+    # Function Name: SvcStop
+    # Purpose: Called when the service is stopped in Windows
+    # Example: Services page->Stop Service
+    #################################################
     def SvcStop(self):
         self.isrunning = False
         self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
         win32event.SetEvent(self.hWaitStop)  
 
-    # The callback for when the client receives a CONNACK response from the server.
+
+    #################################################
+    # Function Name: on_connect
+    # Purpose: When MQTT connects or reconnects
+    # Example: None
+    #################################################
     def on_connect(self, client, userdata, flags, rc):
         self.MQTT_flag_connected = 1
         self.log("MQTT", "Connected to server: " + self.AgentSettings["MQTT"]["Server"] + " with result code " + str(rc))
@@ -164,12 +182,22 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if("ID" in self.AgentSettings["Setup"]):
                 self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Status", "1", qos=1, retain=True)
    
-    # When MQTT is disconnected
+
+    #################################################
+    # Function Name: on_disconnect
+    # Purpose: When MQTT Disconnects from MQTT server
+    # Example: Server goes offline
+    #################################################
     def on_disconnect(self, xclient, userdata, rc):
         self.MQTT_flag_connected = 0
         self.log("MQTT", "Unexpected disconnection", "Warn")
 
-    # Server has updated the RSA Key, lets update it on our end.
+
+    #################################################
+    # Function Name: on_message_RSAPublic
+    # Purpose: Server has updated the RSA Key, lets update it on our end.
+    # Example: Server reboots, manual key refresh
+    #################################################
     def on_message_RSAPublic(self, client, userdata, message):
         if(len(str(message.payload, 'utf-8')) > 0):
             self.log("MQTT", "Got Public Key From server")
@@ -183,7 +211,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 else:
                     self.getReady()
 
-    # Ready is sent on agent start, first step in connection is public key exchange
+
+    #################################################
+    # Function Name: on_message_new
+    # Purpose: New agent, get the ID from server and continue
+    # Example: New Agent is installed
+    #################################################
     def on_message_new(self, client, userdata, message):
         if("Setup" not in self.AgentSettings):
             self.AgentSettings["Setup"] = json.loads(str(message.payload, 'utf-8'))
@@ -191,6 +224,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 self.log("MQTT", "Got ID From server, Setting Up Agent with ID: " + str(self.AgentSettings["Setup"]["ID"]))
                 self.getReady()
 
+
+    #################################################
+    # Function Name: on_message_go
+    # Purpose: Server confirmed we are good to start
+    # Example: Occours after agent is ready
+    #################################################
     def on_message_go(self, client, userdata, message):
         ID = message.topic.split("/")[0]
         self.AgentSettings["Setup"]['ID'] = ID
@@ -199,7 +238,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         # Server has everything it needs for us to start
         self.Go()
 
-    # Proccess Command Prompt
+
+    #################################################
+    # Function Name: on_message_cmd
+    # Purpose: Proccess Command Prompt run command and send response to MQTT
+    # Example: Proccess Command Prompt in front end
+    #################################################
     def on_message_cmd(self, client, userdata, message):
         # Make sure we have the base settings, ID, Salt then start listining to commands
         if("Setup" in self.AgentSettings):
@@ -209,7 +253,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             except Exception as e:
                 self.log("CMD", e, "Error")
 
-    # Proccess Other Commands      
+
+    #################################################
+    # Function Name: on_message_commands
+    # Purpose: Manually run function from an MQTT Call
+    # Example: Front end is asking for new data, 1/Commands/get_sound_devices
+    #################################################    
     def on_message_commands(self, client, userdata, message):
         try:
             command = message.topic.split("/")
@@ -219,7 +268,13 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         except Exception as e:
             self.log("Commands", e, "Error")
 
-    # Gernerate salt and send it to the server,
+
+    #################################################
+    # Function Name: getReady
+    # Purpose: Gernerate salt and send it to the server, connect to correct MQTT Topics
+    #   Restart MQTT connection to reset last will, set callback and wait for server to confirm
+    # Example: Agent starts up, or the proccess after new agent configuration
+    #################################################    
     def getReady(self):
         # Generate Salt
         self.AgentSettings["Setup"]["salt"] = str(Fernet.generate_key(), "utf-8")
@@ -254,7 +309,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         # Send the server our unique encryption key
         self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Ready", self.RSAEncryptedSalt, qos=1, retain=False)
 
-    # The server has recieved our unique encryption key, lets start.
+
+    #################################################
+    # Function Name: Go
+    # Purpose: Server sent us an MQTT message confirming we are good to start
+    # Example: The server has recieved our unique encryption key, lets start.
+    #################################################  
     def Go(self):
         if (self.go == True): return # Don't start again if started.
 
@@ -269,7 +329,6 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             self.log("Start", "Threads: Starting")
 
             self.thread_agent_ui = threading.Thread(target=self.agent_ui, args=[]).start()
-
             self.thread_agent_log = threading.Thread(target=self.start_thread, args=["get_agent_log", True]).start()
             self.thread_general = threading.Thread(target=self.start_thread, args=["get_general", True]).start()
             self.thread_bios = threading.Thread(target=self.start_thread, args=["get_bios", True]).start()
@@ -316,7 +375,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         else:
             self.log("Start", "MQTT is not connected", "Warn")   
 
-    # Log, Type: Info, Warn, Error
+
+    #################################################
+    # Function Name: log
+    # Purpose: To log to warn & errors to file and send all to front end
+    # Example: log("test", "this is a test", Info), types: Info, Warn, Error
+    #################################################
     def log(self, title, message, errorType="Info"):      
         try:
             logEvent = {}
@@ -336,7 +400,11 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             print(e)
             if(DEBUG): print(traceback.format_exc())
 
-    # Save Agent Settings to Json File
+    #################################################
+    # Function Name: save_agent_settings
+    # Purpose: Save Agent Settings to Json File
+    # Example: None
+    #################################################
     def save_agent_settings(self):
         try:
             # Save setup to File
@@ -347,7 +415,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(DEBUG): print(traceback.format_exc())
             self.log("save agent settings", e, "Error")   
 
-    # Start Thread
+   
+    #################################################
+    # Function Name: start_thread
+    # Purpose: Start a forever running thread to send data on an interval
+    # Example: None
+    #################################################
     def start_thread(self, functionName, loop=False, payload="{}"):
         try:
             if(self.MQTT_flag_connected == 1):
@@ -385,7 +458,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                                 data["Request"] = ""
                                 data["Response"] = list(result)
                                 encMessage = self.Fernet.encrypt(json.dumps(data).encode())
-                                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
+                                self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
   
                 else: # This section is ran when asked to get data via a command
                     # Process Payload
@@ -405,7 +478,7 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                         data["Request"] = payload # Pass request payload to response
                         data["Response"] = list(result)
                         encMessage = self.Fernet.encrypt(json.dumps(data).encode())
-                        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
+                        self.mqtt.publish(str(self.AgentSettings["Setup"]["ID"]) + "/Agent/Data/" + functionName[4:] + "/Update", encMessage, qos=1)
                     else: # Rate Limit Reached!
                         self.log("Thread", functionName[4:] + ": RATE LIMIT")
                     
@@ -415,7 +488,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(DEBUG): print(traceback.format_exc())
             self.log("Thread "+ str(line_number) +" - " + functionName, e, "Error")
 
-    # Set Agent Default Settings
+
+    #################################################
+    # Function Name: agent_defaults
+    # Purpose: Set the defaut agent settings
+    # Example: Settings are applied when no static settings have been set by front-end
+    #################################################
     def agent_defaults(self):
         self.log("Start", "Setting Agent Default Settings")
         Interval = {}
@@ -465,7 +543,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
         
         self.AgentSettings['Configurable'] = {'Interval': Interval, "Updates": Updates}
 
-    # Auto Update the Agent
+
+    #################################################
+    # Function Name: auto_update
+    # Purpose: Auto Update the Agent
+    # Example: Runs in a timed loop defined by agent settings
+    #################################################
     def auto_update(self):
         try:
             if("Configurable" in self.AgentSettings):
@@ -482,7 +565,12 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if(DEBUG): print(traceback.format_exc())
             self.log("auto_update", e, "Error")   
 
-    # Process Agent UI System Tray Icon Messages
+
+    #################################################
+    # Function Name: agent_ui
+    # Purpose: Listen to a socket connection from the agent UI
+    # Example: Process Agent UI System Tray Icon Messages
+    #################################################
     def agent_ui(self):
         self.agent_ui_socket_queue = []
         while True:
