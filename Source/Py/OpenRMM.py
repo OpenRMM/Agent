@@ -33,7 +33,7 @@ Service_Name = "OpenRMMAgent"
 Service_Display_Name = "OpenRMM Agent"
 Service_Description = "A free open-source remote monitoring & management tool."
 
-Agent_Version = "2.2.5"
+Agent_Version = "2.2.6"
 
 LOG_File = "C:\OpenRMM\Agent\Agent.log"
 DEBUG = False
