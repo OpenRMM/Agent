@@ -9,7 +9,7 @@ CD C:\OpenRMM\
 echo starting git clone from update source: %update_url% 
 "C:\Program Files\Git\bin\git" clone %update_url% temp
 echo starting copy from temp
-robocopy temp\source\ Agent\ /IS /E /MOVE /IM /XF update.bat
+robocopy temp\source\ Agent\ /IS /E /MOVE /IM
 echo waiting 5 seconds
 timeout 5
 echo restarting service

@@ -27,6 +27,7 @@ from cryptography.fernet import Fernet
 from dictdiffer import diff, patch, swap, revert
 import zmq
 import platform
+import requests
 
 ################################# SETUP ##################################
 Service_Name = "OpenRMMAgent"
@@ -566,10 +567,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
                 if("Updates" in self.AgentSettings['Configurable']):
                     # Loop for periodic updates
                     loopCount = 0
-                    while self.AgentSettings['Configurable']['Updates']["auto_update"] == 1:
-                        time.sleep(1)
+                    while self.AgentSettings['Configurable']['Updates']["auto_update"] == 1:                   
+                        time.sleep(60)               
                         loopCount += 1
-                        if (loopCount == (60 * self.AgentSettings['Configurable']['Updates']["check_interval"])): # Every x minutes
+                        if (loopCount == (self.AgentSettings['Configurable']['Updates']["check_interval"])): # Every x minutes
                             loopCount = 0
                             self.act_update_agent()
         except Exception as e:
@@ -605,13 +606,42 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             if("Configurable" in self.AgentSettings):
                 if("Updates" in self.AgentSettings['Configurable']):
                     update_url = self.AgentSettings['Configurable']['Updates']['update_url']
-
+                    self.log("Update Agent", "Update Requested: " + update_url)
                     # Check if update_url is online and reachable
                     response_code = urllib.request.urlopen(update_url).getcode()
                     if(response_code == 200):
-                        self.log("Update Agent", "Update Requested: " + update_url)  
-                        proc = subprocess.Popen("start C:/OpenRMM/Agent/update.bat " + update_url, shell=True)
-                        self.SvcStop()
+
+                        # Get Lastest Release & compare to running version
+                        response = requests.get("https://api.github.com/repos/OpenRMM/Agent/releases")
+                        latest_version = response.json()[0]["name"]
+                        download_url = response.json()[0]["zipball_url"]
+
+                        if(latest_version != Agent_Version):
+                            # Lets download the update
+                            print("New Agent Update Avaliable: " + str(latest_version))
+
+                            if(not os.path.exists("C:/OpenRMM/Agent/Updates")):
+                                os.mkdir("C:/OpenRMM/Agent/Updates")
+
+                            results = requests.get(download_url)
+                            with open('C:/OpenRMM/Agent/Updates/' + latest_version + '.zip', 'wb') as f:
+                                f.write(results.content)
+                            
+                            import zipfile
+                            # Unzip the folder
+                            print("Unzip the folder")
+                            # printing all the contents of the zip file
+                            with zipfile.ZipFile('C:/OpenRMM/Agent/Updates/' + latest_version + '.zip', 'r') as zipObj:
+                                listOfiles = zipObj.namelist()
+                                for file in listOfiles:
+                                    if file.startswith(listOfiles[0] + 'Source/'):
+                                        zipObj.extract(file, 'C:/OpenRMM/Agent/Updates/' + latest_version)
+
+                            from subprocess import call
+                            call(["robocopy", "C:/OpenRMM/Agent/Updates/" + latest_version + "/" + listOfiles[0] + "/Source/", "C:/OpenRMM/Agent/", "/IS", "/E", "/MOVE", "/IM"])
+
+                            proc = subprocess.Popen("start C:/OpenRMM/Agent/restart_service.bat", shell=True)
+                            self.SvcStop()
                     else:
                         self.log("Update Agent", "Cannot update, update URL: " + update_url + " is unreachable: " + str(response_code), "Warn") 
                 else:
@@ -619,8 +649,10 @@ class OpenRMMAgent(win32serviceutil.ServiceFramework):
             else:
                 self.log("Update Agent", "Cannot update, missing data[update_url]", "Warn")
         except Exception as e:
-            if(DEBUG): print(traceback.format_exc())
-            self.log("act_update_agent", e, "Error")
+                exception_type, exception_object, exception_traceback = sys.exc_info()
+                line_number = exception_traceback.tb_lineno
+                if(DEBUG): print(traceback.format_exc())
+                self.log("Update Agent "+ str(line_number), e, "Error")
 
     # Restart Agent
     def act_restart_agent(self, wmi, payload=None):
